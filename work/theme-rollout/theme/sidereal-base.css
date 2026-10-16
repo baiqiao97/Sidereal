@@ -1,0 +1,105 @@
+/* Sidereal 作品主题 · 成套样式（v1，2026-10-09）
+   新作品和 Markdown 转出来的作品用：在 sidereal-tokens.css 之后引用。
+   老作品改造时一般只接变量层，不接这一层，免得冲掉原来的布局。
+   类名统一用 sd- 前缀，不和作品自己的类名打架。 */
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;min-height:100vh;color:var(--ink);font:14px/1.55 var(--font-ui);-webkit-font-smoothing:antialiased;
+ background-color:var(--page);
+ background-image:linear-gradient(var(--grid-major) 1px,transparent 1px),linear-gradient(90deg,var(--grid-major) 1px,transparent 1px),
+  linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+ background-size:96px 96px,96px 96px,24px 24px,24px 24px}
+::selection{background:var(--mark);color:var(--ink)}
+[data-theme="dark"] ::selection{color:#1C1A12}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+a{color:var(--accent);text-underline-offset:3px;text-decoration-thickness:1px}
+a:hover{color:var(--accent-ink)}
+img,video,svg,canvas{max-width:100%}
+img{filter:var(--img-filter)}
+button{font:inherit;color:inherit;cursor:pointer}
+.sd-num,.sd-stats{font-variant-numeric:tabular-nums}
+
+/* ---- 页面骨架：顶栏 + 目录 + 正文（布局不强制，这是推荐的一种） ---- */
+.sd-top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:14px;padding:12px max(16px,3vw);
+ background:color-mix(in srgb,var(--page) 88%,transparent);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.sd-brand{font-family:var(--font-hand);font-size:22px;letter-spacing:.04em;color:var(--ink);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sd-script{font-family:var(--font-script);font-size:18px;color:var(--ink-3);white-space:nowrap}
+.sd-top .sd-spacer{flex:1}
+.sd-page{display:grid;grid-template-columns:248px minmax(0,1fr);gap:28px;max-width:1180px;margin:0 auto;padding:24px max(16px,3vw) 72px}
+.sd-page.sd-single{grid-template-columns:minmax(0,1fr);max-width:880px}
+.sd-toc{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 100px);overflow:auto;padding:4px 2px 12px;font-size:13px}
+.sd-toc p{margin:0 0 8px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-2)}
+.sd-toc a{display:block;padding:5px 10px;border-left:2px solid var(--line);color:var(--ink-2);text-decoration:none;line-height:1.45}
+.sd-toc a.sd-l3{padding-left:22px;font-size:12.5px}
+.sd-toc a:hover{color:var(--ink);border-left-color:var(--line-2)}
+.sd-toc a.on{color:var(--accent-ink);border-left-color:var(--accent);background:var(--accent-soft)}
+.sd-main{min-width:0}
+
+/* ---- 纸面 ---- */
+.sd-card{position:relative;background:var(--sheet);border-radius:var(--radius);box-shadow:var(--shadow-sheet);padding:clamp(18px,3vw,34px)}
+.sd-tape{position:absolute;top:-10px;left:28px;width:64px;height:20px;transform:rotate(-4deg);border-radius:2px;pointer-events:none;
+ background:repeating-linear-gradient(135deg,var(--tape) 0 6px,var(--tape-stripe) 6px 9px)}
+.sd-tape.r{left:auto;right:36px;transform:rotate(5deg)}
+
+/* ---- 文字 ---- */
+.sd-prose{font-size:16px;line-height:1.8;max-width:680px}
+.sd-prose h1{font-family:var(--font-hand);font-weight:400;font-size:clamp(26px,4vw,34px);line-height:1.25;letter-spacing:.02em;margin:0 0 6px}
+.sd-prose .sd-sub{margin:0 0 26px;color:var(--ink-2);font-size:14px}
+.sd-prose h2{font-size:20px;font-weight:600;line-height:1.4;margin:2.1em 0 .7em;display:flex;align-items:baseline;gap:10px;scroll-margin-top:84px}
+.sd-prose h2 .sd-no{font-family:var(--font-hand);font-weight:400;font-size:22px;color:var(--accent)}
+.sd-prose h3{font-size:17px;font-weight:600;margin:1.7em 0 .5em;scroll-margin-top:84px}
+.sd-prose h4{font-size:15px;font-weight:600;margin:1.4em 0 .4em;color:var(--ink-2)}
+.sd-prose p{margin:0 0 1em}
+.sd-prose ul,.sd-prose ol{margin:0 0 1em;padding-left:1.4em}
+.sd-prose li{margin:.25em 0}
+.sd-prose li::marker{color:var(--ink-3)}
+.sd-prose strong{font-weight:650}
+.sd-prose mark,mark.sd-mark{background:var(--mark-soft);color:inherit;padding:1px 3px;border-radius:3px;box-shadow:inset 0 -2px 0 var(--mark)}
+.sd-prose hr{border:0;border-top:1px dashed var(--line-2);margin:2em 0}
+.sd-prose code{font-family:var(--font-mono);font-size:.88em;background:var(--sheet-2);border:1px solid var(--line);border-radius:5px;padding:1px 5px}
+.sd-prose pre{background:var(--sheet-2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;overflow:auto;line-height:1.6}
+.sd-prose pre code{background:none;border:0;padding:0;font-size:13px}
+.sd-prose blockquote{margin:0 0 1em;padding:2px 0 2px 16px;border-left:3px solid var(--line-2);color:var(--ink-2)}
+.sd-table{overflow-x:auto;margin:0 0 1.2em;-webkit-overflow-scrolling:touch}
+.sd-prose table{width:100%;border-collapse:collapse;font-size:14.5px;line-height:1.6}
+.sd-prose th,.sd-prose td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+.sd-prose th{font-weight:600;color:var(--ink-2);background:var(--sheet-2);white-space:nowrap}
+.sd-prose figure{margin:1.2em 0}
+.sd-prose figcaption{font-size:13px;color:var(--ink-2);margin-top:6px}
+
+/* ---- 条文 / 批注 / 提示 ---- */
+.sd-statute{margin:.4em 0 1.2em;border-left:3px solid var(--accent);background:var(--sheet-2);padding:12px 16px;border-radius:0 var(--radius-sm) var(--radius-sm) 0;font-size:15.5px;line-height:1.8}
+.sd-statute .sd-art{display:block;margin-bottom:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;color:var(--accent-ink)}
+.sd-statute p:last-child{margin-bottom:0}
+.sd-note{font-family:var(--font-hand);font-size:17px;color:var(--ink-2)}
+.sd-callout{margin:.4em 0 1.2em;padding:12px 16px;border-radius:var(--radius-sm);background:var(--mark-soft);border:1px solid color-mix(in srgb,var(--mark) 60%,transparent)}
+.sd-callout p:last-child{margin-bottom:0}
+
+/* ---- 控件 ---- */
+.sd-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-2);background:var(--sheet);color:var(--ink);border-radius:var(--radius-sm);padding:8px 14px;font-size:14px;text-decoration:none;line-height:1.2}
+.sd-btn:hover{background:var(--sheet-3)}
+.sd-btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.sd-btn.primary:hover{filter:brightness(1.08)}
+.sd-chip{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;border-radius:999px;padding:3px 11px;border:1px solid var(--line-2);color:var(--ink-2)}
+.sd-chip.now{background:var(--mark);border-color:transparent;color:#3D3008}
+.sd-chip.ok{color:var(--ok);border-color:currentColor;background:var(--ok-soft)}
+.sd-chip.bad{color:var(--bad);border-color:currentColor;background:var(--bad-soft)}
+.sd-tag{display:inline-block;font-family:var(--font-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent-soft);padding:3px 8px;border-radius:6px}
+.sd-stats{display:flex;gap:28px;flex-wrap:wrap;margin:6px 0 22px}
+.sd-stats div{font-size:12px;color:var(--ink-2)}
+.sd-stats b{display:block;font-size:24px;font-weight:500;color:var(--ink)}
+.sd-top [data-sd-theme]{border:1px solid var(--line-2);background:var(--sheet);color:var(--ink-2);border-radius:999px;padding:6px 12px;font-size:12.5px;white-space:nowrap}
+.sd-totop{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));width:38px;height:38px;border-radius:50%;border:1px solid var(--line-2);background:var(--sheet);color:var(--ink-2);box-shadow:var(--shadow-sheet);opacity:0;pointer-events:none;transition:opacity .25s}
+.sd-totop.show{opacity:.9;pointer-events:auto}
+
+@media (max-width:900px){
+ .sd-page{grid-template-columns:minmax(0,1fr);gap:16px;padding-top:14px}
+ .sd-toc{position:static;max-height:none;padding:0}
+ .sd-toc details{background:var(--sheet);border-radius:var(--radius-sm);box-shadow:var(--shadow-sheet);padding:10px 12px}
+ .sd-toc summary{cursor:pointer;font-size:13px;color:var(--ink-2)}
+ .sd-script{display:none}
+}
+@media (min-width:901px){.sd-toc details>summary{display:none}}
+@media print{body{background:#fff}.sd-top,.sd-toc,.sd-totop{display:none}.sd-page{display:block;padding:0}.sd-card{box-shadow:none;padding:0}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}

@@ -1,0 +1,67 @@
+/* Sidereal 作品主题 · 变量层（v1，2026-10-09）
+   所有作品都引用这一份：颜色、字体、深浅两套值。改这里，全站作品一起变。
+   规范见 outputs/网页共建/作品视觉规范.md。作品里只写 var(--…)，不要写死颜色。
+   深浅由 sidereal.js 写到 <html data-theme="light|dark">；大类由作品自己写 <html data-field="law|science|english|piano|tools">。 */
+
+@font-face{font-family:"LXGW WenKai";src:local("LXGW WenKai"),local("LXGWWenKai-Regular"),url("fonts/lxgw-wenkai-regular.subset.woff2") format("woff2");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Caveat";src:url("fonts/caveat.subset.woff2") format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+
+:root{color-scheme:light;
+ /* 中性色：浅色是蓝图纸 */
+ --page:#E8EEF6;--grid:rgba(40,76,136,.05);--grid-major:rgba(40,76,136,.075);
+ --sheet:#FCFDFE;--sheet-2:#F2F6FB;--sheet-3:#E9F0F8;
+ --ink:#1E3257;--ink-2:#51658A;--ink-3:#8898B2;
+ --line:#D6E0EC;--line-2:#C2D0E3;
+ /* 标记黄：全站唯一的「当前 / 重点」 */
+ --mark:#F6E7A6;--mark-soft:#FBF4D4;--mark-ink:#6E5816;
+ /* 对错反馈，只用于练习 */
+ --ok:#2E8A6C;--ok-soft:#E3F3EC;--bad:#C9534A;--bad-soft:#FBEBE8;
+ --focus:#5A8AD6;
+ --tape:rgba(150,181,226,.58);--tape-stripe:rgba(255,255,255,.38);
+ --shadow-sheet:0 1px 0 rgba(30,50,87,.05),0 12px 30px -14px rgba(30,50,87,.32);
+ --shadow-pop:0 22px 60px -20px rgba(18,34,64,.55);
+ --img-filter:none;
+ /* 没写 data-field 时的默认主色（藏青） */
+ --accent:#213A66;--accent-soft:#E7EEF8;--accent-ink:#1A2F54;--on-accent:#FCFDFE;
+ /* 字体 */
+ --font-ui:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Segoe UI",sans-serif;
+ --font-hand:"LXGW WenKai","Kaiti SC","STKaiti","KaiTi","BiauKai",serif;
+ --font-script:"Caveat",var(--font-hand);
+ --font-mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+ --radius:14px;--radius-sm:10px}
+
+:root[data-theme="dark"]{color-scheme:dark;
+ /* 中性色：深色是炭灰 */
+ --page:#141416;--grid:rgba(255,255,255,.028);--grid-major:rgba(255,255,255,.05);
+ --sheet:#1C1C1F;--sheet-2:#18181B;--sheet-3:#27272B;
+ --ink:#ECEAE5;--ink-2:#AAA8A3;--ink-3:#77756F;
+ --line:#2C2C30;--line-2:#3A3A3F;
+ --mark:#E8CF7C;--mark-soft:rgba(232,207,124,.12);--mark-ink:#F0DC9A;
+ --ok:#7FD0B1;--ok-soft:rgba(127,208,177,.12);--bad:#F29C92;--bad-soft:rgba(242,156,146,.12);
+ --focus:#9DBEF5;
+ --tape:rgba(210,208,202,.16);--tape-stripe:rgba(255,255,255,.07);
+ --shadow-sheet:0 0 0 1px rgba(255,255,255,.06),0 16px 36px -18px rgba(0,0,0,.8);
+ --shadow-pop:0 22px 60px -16px rgba(0,0,0,.85);
+ --img-filter:brightness(.9);
+ --accent:#A9C0EE;--accent-soft:rgba(169,192,238,.13);--accent-ink:#CADAF6;--on-accent:#141416}
+
+/* 大类主色：01 法学酒红 · 02 数理钴蓝 · 03 英语紫藤 · 04 钢琴藏青 · 05 小工具石青 */
+[data-field="law"]{--accent:#8E2F3C;--accent-soft:#F6E6E8;--accent-ink:#74232F}
+[data-field="science"]{--accent:#2D5BD0;--accent-soft:#E6EDFC;--accent-ink:#2147A8}
+[data-field="english"]{--accent:#6A4FB4;--accent-soft:#EFEAFA;--accent-ink:#553D96}
+[data-field="piano"]{--accent:#213A66;--accent-soft:#E7EEF8;--accent-ink:#1A2F54}
+[data-field="tools"]{--accent:#1E6E86;--accent-soft:#E3F1F5;--accent-ink:#175A6E}
+[data-theme="dark"][data-field="law"],[data-theme="dark"] [data-field="law"]{--accent:#E89AA6;--accent-soft:rgba(232,154,166,.13);--accent-ink:#F3C1C9}
+[data-theme="dark"][data-field="science"],[data-theme="dark"] [data-field="science"]{--accent:#93B2FF;--accent-soft:rgba(147,178,255,.13);--accent-ink:#BFD0FF}
+[data-theme="dark"][data-field="english"],[data-theme="dark"] [data-field="english"]{--accent:#BCA8F4;--accent-soft:rgba(188,168,244,.13);--accent-ink:#D8CCFA}
+[data-theme="dark"][data-field="piano"],[data-theme="dark"] [data-field="piano"]{--accent:#A9C0EE;--accent-soft:rgba(169,192,238,.13);--accent-ink:#CADAF6}
+[data-theme="dark"][data-field="tools"],[data-theme="dark"] [data-field="tools"]{--accent:#86CDE0;--accent-soft:rgba(134,205,224,.13);--accent-ink:#B5E2EE}
+
+/* 深浅切换按钮：作品里任意元素加 data-sd-theme 就会变成开关；
+   <html data-sd-toggle="auto"> 且页面里没有开关时，sidereal.js 会在右下角放一个 */
+.sd-theme-fab{position:fixed;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483000;
+ height:34px;padding:0 13px;border-radius:999px;border:1px solid var(--line-2);background:var(--sheet);color:var(--ink-2);
+ font:500 12.5px/1 var(--font-ui);box-shadow:var(--shadow-sheet);cursor:pointer;opacity:.86;transition:opacity .2s}
+.sd-theme-fab:hover{opacity:1;color:var(--ink)}
+[data-sd-theme]::before{content:"◐";margin-right:6px;font-size:.95em}
+@media print{.sd-theme-fab{display:none}}

@@ -1,0 +1,68 @@
+<!doctype html><html lang="en" data-view="gate"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="referrer" content="no-referrer"><meta name="color-scheme" content="dark"><meta name="theme-color" content="#04050a"><title>Sidereal</title>
+<link rel="stylesheet" href="/gate.css"></head><body>
+<canvas id="space" aria-hidden="true"></canvas>
+<div id="veil" aria-hidden="true"></div>
+<div id="fade" aria-hidden="true"></div>
+
+<div class="corner tl" id="brand">SIDEREAL</div>
+<div class="corner bl" id="caption" aria-hidden="true"><i class="bars"><b></b><b></b><b></b></i><span id="caption-text">DRAG TO LOOK AROUND</span></div>
+<div class="corner br" id="credit" aria-hidden="true"></div>
+
+<main id="gate">
+ <h1 id="title" class="title">Sidereal</h1>
+ <form id="unlock" autocomplete="off" onsubmit="if(!window.__zone_on){window.__enter=1;var s=document.getElementById('status');if(s)s.textContent='Opening the library…';}return false">
+  <label for="password" class="sr">Password</label>
+  <input id="password" type="password" placeholder="Password" autocomplete="current-password" spellcheck="false" required>
+  <button id="submit" type="submit" aria-label="Unlock"><span class="enter-t">Enter</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11M10.5 4.5 16 10l-5.5 5.5"/></svg></button>
+ </form>
+ <p id="status" class="status" role="status"></p>
+</main>
+
+<section id="sky" hidden>
+ <div id="labels"></div>
+ <div id="tip" class="tip tk" hidden></div>
+ <header id="fieldbar" class="fieldbar"><button id="field-back" type="button"><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8"/></svg>Sky</button><span id="field-title"></span><span id="field-pos"></span></header>
+ <nav id="dock" class="dock tk" aria-label="Library">
+  <button id="index-open" class="dbtn primary" type="button" aria-expanded="false" aria-controls="index"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5.5h12M4 10h12M4 14.5h7"/></svg>Index<b id="index-count"></b><kbd>⌘K</kbd></button>
+ </nav>
+ <aside id="cluster" class="cluster tk" aria-label="Works in this field" hidden>
+  <button id="cl-grip" class="cl-grip" type="button" aria-label="Expand list"></button>
+  <header class="cl-head"><div><p id="cl-no" class="cl-no"></p><h2 id="cl-name"></h2></div><button id="cl-close" class="ix-close" type="button" aria-label="Close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"/></svg></button></header>
+  <button id="cl-walk" class="cl-walk" type="button"><i class="star"></i><span id="cl-walk-t"></span><b>›</b></button>
+  <div id="cl-body" class="cl-body"></div>
+ </aside>
+ <div id="index" class="index" role="dialog" aria-modal="true" aria-label="Index" hidden>
+  <div class="ix-top"><header class="ix-head">
+   <div class="ix-title"><h2>Index</h2><p id="ix-sum"></p></div>
+   <label class="ix-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4.5 4.5"/></svg><span class="sr">Search works</span><input id="search" type="search" placeholder="Search titles, subjects, types" autocomplete="off" spellcheck="false"></label>
+   <button id="index-close" class="ix-close" type="button" aria-label="Close index"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15"/></svg></button>
+  </header></div>
+  <div class="ix-wrap">
+   <nav id="ix-rail" class="ix-rail" aria-label="Fields"></nav>
+   <div class="ix-main"><div id="ix-body"></div>
+    <footer class="ix-foot"><button id="classic" class="link" type="button">Legacy index</button><p class="credits">Sky: NASA/GSFC SVS · Gaia DR2: ESA/Gaia/DPAC · Yale Bright Star Catalogue<br>Planet textures: Solar System Scope, CC BY 4.0</p></footer><div id="ix-pad" aria-hidden="true"></div>
+   </div>
+  </div>
+ </div>
+</section>
+
+<section id="reader" hidden>
+ <header id="readerbar"><button id="back" type="button"><svg viewBox="0 0 12 20" aria-hidden="true"><path d="M10 2 2 10l8 8"/></svg>Sky</button><span id="reader-title"></span><span class="spacer"></span></header>
+ <iframe id="frame" title="Work" referrerpolicy="no-referrer"></iframe>
+</section>
+
+<p id="loadline" class="loadline" hidden></p>
+
+<script>
+/* 旧版后台程序（sw.js）不放行 /assets/：先确认主程序拿得到，拿不到就先换上新的后台程序再刷新一次 */
+(function(){var src='/assets/APP_JS',sw=navigator.serviceWorker;
+function load(){var s=document.createElement('script');s.src=src;document.body.appendChild(s);}
+var tried=false;try{tried=sessionStorage.getItem('sw-upgrade')===src;}catch(e){}
+if(!sw||!sw.controller||tried){load();return;}
+fetch(src,{method:'HEAD',cache:'no-store'}).then(function(r){if(r.ok)load();else throw 0;}).catch(function(){
+ try{sessionStorage.setItem('sw-upgrade',src);}catch(e){}
+ var done=false;function go(){if(!done){done=true;location.reload();}}
+ sw.addEventListener('controllerchange',go);setTimeout(go,5000);
+ sw.getRegistration().then(function(reg){return reg&&reg.update();}).catch(function(){});
+});})();
+</script></body></html>

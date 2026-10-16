@@ -1,0 +1,40 @@
+# Sidereal 双人协作约定
+
+## 第一次使用
+
+1. 安装 Git、VS Code，并使用各自 GitHub 账号登录 VS Code。
+2. GitHub 仓库所有者通过仓库 **Settings → Collaborators** 邀请另一位开发者；对方接受邀请。
+3. 两人在 VS Code 中依次选择 **命令面板 → Git: Clone**，粘贴仓库 HTTPS 地址，选择本地文件夹并打开。
+4. 通过 VS Code 的 **Source Control（源代码管理）** 面板查看改动、暂存、提交和同步。
+
+## 每一轮（终端写法，也可在 VS Code 界面完成）
+
+```bash
+# 先切回并更新主分支
+git switch main
+git pull --ff-only
+
+# 新建自己的功能分支（分支名按任务变化）
+git switch -c feat/law-categories
+
+# 修改、保存文件；检查再提交
+git status
+git diff
+git add work/next-zone/src/law-categories.js
+git commit -m "feat: add initial law subject categories"
+git push -u origin feat/law-categories
+```
+
+之后在 GitHub 上发起 Pull Request，让另一位开发者检查再合并。不同人应使用**各自的 GitHub 账号**，不要共享访问令牌或密码。直接往 `main` 推送不是推荐的合作方式。
+
+## 安全与资料
+
+- 不提交 `.env`、API Key、密码、真实加密密钥、个人数据与私人笔记。
+- 不直接把法考教材、考研辅导资料或其他未经授权的受版权保护内容上传仓库。
+- `vault/`、部署产物与本地依赖会被 `.gitignore` 排除；此前已经被 Git 跟踪的文件不受忽略规则影响，需要单独检查。
+- 这个压缩包缺少在线站点的完整素材。需要部署前，应由原作者提供完整、获授权的资源并单独管理，不要提交进源码仓库。
+- 先保留 Cloudflare 线上站点，功能未通过验证前不要覆盖部署。
+
+## 出现冲突
+
+不要执行 `git push --force` 或 `git reset --hard` 来消除协作冲突。先保留本地改动，再一起查看冲突的文件和具体代码。

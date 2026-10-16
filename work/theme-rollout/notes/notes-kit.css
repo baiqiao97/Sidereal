@@ -1,0 +1,60 @@
+/* 划线笔记（2026-10-16）：配色用全站主题变量，跟着深浅走；四种划线色是内容色，深色下自动调暗 */
+mark.sdn{color:inherit;padding:0;border-radius:2px;cursor:pointer;-webkit-box-decoration-break:clone;box-decoration-break:clone}
+mark.sdn-yellow{background:rgba(250,214,80,.42)}mark.sdn-green{background:rgba(110,205,145,.36)}mark.sdn-blue{background:rgba(110,170,240,.34)}mark.sdn-pink{background:rgba(240,130,175,.34)}
+[data-theme="dark"] mark.sdn-yellow{background:rgba(230,190,60,.30)}[data-theme="dark"] mark.sdn-green{background:rgba(90,190,130,.28)}[data-theme="dark"] mark.sdn-blue{background:rgba(100,160,240,.30)}[data-theme="dark"] mark.sdn-pink{background:rgba(235,120,170,.28)}
+mark.sdn.sdn-u{background:none;text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:3px}
+mark.sdn-u.sdn-yellow{text-decoration-color:#d4a514}mark.sdn-u.sdn-green{text-decoration-color:#2f9e63}mark.sdn-u.sdn-blue{text-decoration-color:#3f7fd8}mark.sdn-u.sdn-pink{text-decoration-color:#d24f8c}
+mark.sdn.sdn-has::after{content:"✎";font-size:.62em;vertical-align:super;margin-left:1px;color:var(--accent,#8E2F3C);font-weight:600}
+mark.sdn-flash{animation:sdn-flash 1.4s ease-out}
+@keyframes sdn-flash{0%,30%{box-shadow:0 0 0 3px var(--mark,#f5d76e)}100%{box-shadow:0 0 0 0 transparent}}
+.sdn-ui{font-family:var(--font-ui,-apple-system,"PingFang SC",sans-serif)}
+.sdn-sw{width:22px;height:22px;border-radius:50%;border:1px solid rgba(0,0,0,.12);padding:0;cursor:pointer;flex:none}
+.sdn-sw.sdn-yellow{background:#f3cf4e}.sdn-sw.sdn-green{background:#5cc48a}.sdn-sw.sdn-blue{background:#5d9be8}.sdn-sw.sdn-pink{background:#e77fae}
+.sdn-bar{position:fixed;z-index:2147482000;display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:12px;background:var(--sheet,#fff);border:1px solid var(--line-2,#ccd);box-shadow:var(--shadow-pop,0 8px 30px rgba(0,0,0,.18));color:var(--ink,#123)}
+.sdn-bar button:not(.sdn-sw){border:0;background:transparent;color:inherit;font:inherit;font-size:13px;padding:4px 7px;border-radius:7px;cursor:pointer}
+.sdn-bar button:not(.sdn-sw):hover{background:var(--accent-soft,rgba(0,0,0,.06))}
+.sdn-bar .sdn-div{width:1px;height:18px;background:var(--line,#dde)}
+.sdn-bar.sdn-dock{left:50%!important;top:auto!important;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%)}
+.sdn-bar.sdn-dock .sdn-sw{width:28px;height:28px}.sdn-bar.sdn-dock button:not(.sdn-sw){font-size:15px;padding:7px 10px}
+.sdn-dialog{width:min(520px,calc(100vw - 28px));border:1px solid var(--line,#dde);border-radius:var(--radius,12px);padding:0;background:var(--sheet,#fff);color:var(--ink,#123);box-shadow:var(--shadow-pop,0 8px 30px rgba(0,0,0,.2))}
+.sdn-dialog::backdrop{background:rgba(12,24,45,.4)}[data-theme="dark"] .sdn-dialog::backdrop{background:rgba(0,0,0,.6)}
+.sdn-dialog form{display:flex;flex-direction:column;gap:12px;padding:18px 20px}
+.sdn-dialog header,.sdn-drawer header{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.sdn-dialog h2,.sdn-drawer h2{margin:0;font:500 19px/1.3 var(--font-hand,inherit);letter-spacing:.02em}
+.sdn-drawer h2 small{font:12px var(--font-mono,monospace);color:var(--ink-3,#889)}
+.sdn-x{border:0;background:transparent;color:var(--ink-2,#556);font-size:22px;line-height:1;cursor:pointer;padding:2px 6px}
+.sdn-src{margin:0;font:11px/1.5 var(--font-mono,monospace);letter-spacing:.06em;color:var(--ink-3,#889)}
+.sdn-quote,.sdn-card blockquote{margin:0;padding:8px 12px;border-left:3px solid var(--mark,#f3cf4e);background:var(--sheet-2,#f6f7fa);color:var(--ink-2,#445);font-size:14px;line-height:1.75;max-height:9em;overflow:auto;white-space:pre-wrap}
+.sdn-dialog textarea{width:100%;box-sizing:border-box;min-height:120px;resize:vertical;padding:10px 12px;border:1px solid var(--line-2,#ccd);border-radius:8px;background:var(--sheet,#fff);color:var(--ink,#123);font:15px/1.7 var(--font-ui,inherit)}
+.sdn-dialog textarea:focus{outline:2px solid var(--focus,#c9a24a);outline-offset:1px}
+.sdn-style{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--ink-2,#556)}
+.sdn-pick{display:inline-flex;cursor:pointer}.sdn-pick input{position:absolute;opacity:0;pointer-events:none}
+.sdn-pick input:checked+.sdn-sw{box-shadow:0 0 0 2px var(--sheet,#fff),0 0 0 4px var(--ink,#123)}
+.sdn-ul{margin-left:6px;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+.sdn-dialog footer{display:flex;align-items:center;gap:8px}.sdn-dialog footer span{flex:1}
+.sdn-dialog footer button,.sdn-io button,.sdn-row button{font:inherit;font-size:13px;padding:7px 12px;border-radius:8px;border:1px solid var(--line-2,#ccd);background:var(--sheet,#fff);color:var(--ink,#123);cursor:pointer}
+.sdn-dialog .sdn-ok{background:var(--accent,#8E2F3C);border-color:var(--accent,#8E2F3C);color:var(--on-accent,#fff)}
+.sdn-dialog .sdn-del{color:var(--bad,#b3261e);border-color:transparent;background:transparent;padding-left:0}
+.sdn-drawer{position:fixed;z-index:2147481000;top:0;right:0;bottom:0;width:min(400px,94vw);display:flex;flex-direction:column;gap:10px;padding:16px 16px 12px;box-sizing:border-box;background:var(--sheet,#fff);color:var(--ink,#123);border-left:1px solid var(--line,#dde);box-shadow:var(--shadow-pop,-8px 0 30px rgba(0,0,0,.15))}
+.sdn-q{width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--line-2,#ccd);border-radius:8px;background:var(--sheet-2,#f6f7fa);color:var(--ink,#123);font:14px var(--font-ui,inherit)}
+.sdn-io{display:flex;gap:6px;flex-wrap:wrap}.sdn-io button{padding:5px 10px;font-size:12px}
+.sdn-hint{margin:0;font-size:11.5px;line-height:1.6;color:var(--ink-3,#889)}
+.sdn-list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:10px;padding-bottom:20px}
+.sdn-card{border:1px solid var(--line,#dde);border-left-width:4px;border-radius:10px;padding:10px 12px;background:var(--sheet,#fff);display:flex;flex-direction:column;gap:7px}
+.sdn-c-yellow{border-left-color:#f3cf4e}.sdn-c-green{border-left-color:#5cc48a}.sdn-c-blue{border-left-color:#5d9be8}.sdn-c-pink{border-left-color:#e77fae}
+.sdn-card blockquote{border-left:0;padding:6px 9px;font-size:13px}
+.sdn-from{margin:0;font:11px/1.5 var(--font-mono,monospace);letter-spacing:.04em;color:var(--ink-3,#889)}
+.sdn-body{margin:0;font-size:14px;line-height:1.7;white-space:pre-wrap;color:var(--ink,#123)}
+.sdn-row{display:flex;gap:6px}.sdn-row button{padding:4px 10px;font-size:12px}
+.sdn-empty{text-align:center;color:var(--ink-3,#889);font-size:13px;line-height:1.8;padding:40px 10px}
+.sdn-toast{position:fixed;z-index:2147483000;left:50%;bottom:80px;transform:translateX(-50%);padding:9px 16px;border-radius:10px;background:var(--ink,#123);color:var(--page,#fff);font-size:13px;box-shadow:var(--shadow-pop,0 8px 30px rgba(0,0,0,.2));max-width:86vw}
+.sdn-open{white-space:nowrap}.sdn-open i{font-style:normal}.sdn-open b{font-weight:600;margin-left:3px;font-variant-numeric:tabular-nums}.sdn-open .sdn-i{display:none}
+@media (max-width:640px){.sdn-open .sdn-l{display:none}.sdn-open .sdn-i{display:inline}}   /* 手机顶栏挤：只留 ✎ 和条数 */
+.sdn-bar button{white-space:nowrap}
+.sdn-fab{position:fixed;z-index:2147480000;right:max(14px,env(safe-area-inset-right));bottom:max(60px,calc(env(safe-area-inset-bottom) + 56px));padding:8px 14px;border-radius:999px;border:1px solid var(--line-2,#ccd);background:var(--sheet,#fff);color:var(--ink,#123);font:500 13px var(--font-ui,inherit);box-shadow:var(--shadow-sheet,0 4px 14px rgba(0,0,0,.12));cursor:pointer}
+/* 作品自己的全局样式别漏进来：有的作品没写 [hidden]{display:none}，有的给 aside/header/footer 整类上了高度、贴边、毛玻璃（经济法课程资料） */
+.sdn-bar[hidden],.sdn-drawer[hidden],.sdn-toast[hidden],.sdn-dialog [hidden]{display:none!important}
+.sdn-drawer{left:auto;height:auto;max-height:none;overflow:hidden;border-right:0;margin:0}
+.sdn-dialog header,.sdn-drawer header{position:static;height:auto;min-height:0;padding:0;margin:0;border:0;background:none;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none;flex-wrap:nowrap;z-index:auto}
+.sdn-dialog footer{margin:0;padding:0;border:0;background:none;font-size:inherit;color:inherit}
+@media print{.sdn-ui,.sdn-open{display:none!important}mark.sdn{background:none;text-decoration:underline}}

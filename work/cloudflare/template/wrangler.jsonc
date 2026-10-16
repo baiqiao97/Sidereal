@@ -1,0 +1,17 @@
+{
+  // 纯静态：没有 main 脚本，所有请求都是免费、不限量的静态文件请求。
+  "name": "my-web-library",
+  "compatibility_date": "2026-09-27",
+  "workers_dev": true,
+  "preview_urls": false,
+  "build": {
+    // wrangler deploy / dev 前自动跑，校验不过就中止发布（对应 Firebase 的 predeploy）。
+    // 必须在本目录里运行 wrangler；在别处运行会找不到守卫而中止，不会误发。
+    "command": "node deployment-guard.cjs"
+  },
+  "assets": {
+    "directory": "./public",
+    // 对应 firebase.json 的 "**" -> /index.html：不存在的路径一律回到解锁页。
+    "not_found_handling": "single-page-application"
+  }
+}

@@ -1,0 +1,26 @@
+# Dependencies and local tool caches
+**/node_modules/
+**/.cache/
+**/.DS_Store
+Thumbs.db
+*.log
+
+# Credentials: never commit secrets
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+**/secrets/
+
+# Generated site, libraries and large/private content
+work/cloudflare/template/public/
+work/next-zone/dist/
+work/next-zone/build/
+**/vault/
+**/vault-*/
+**/deployment-manifest.json
+
+# Local workspace files
+.vscode/*.local.json
