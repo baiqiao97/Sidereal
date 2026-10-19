@@ -12,7 +12,8 @@
   function createAccountUi(hooks) {
     // ---- DOM节点 ----
     const ids = ['authSection', 'authStatus', 'authForm', 'authUsername', 'authPassword',
-      'legacyClaimRow', 'legacyClaimText', 'legacyClaim', 'authSubmit', 'authToggle', 'authError', 'logoutButton'];
+      'legacyClaimRow', 'legacyClaimText', 'legacyClaim', 'authSubmit', 'authToggle', 'authError', 'logoutButton',
+      'passwordForm', 'currentPassword', 'newPassword', 'confirmPassword', 'changePasswordButton'];
     const nodes = {};
     for (let i = 0; i < ids.length; i++) {
       const node = document.getElementById(ids[i]);
@@ -53,6 +54,13 @@
       return err && err.message ? err.message : fallback;
     }
 
+    // 清空三个修改密码输入框；退出/会话失效/账户切换时调用，避免旧密码残留到下一账户
+    function clearPasswordFields() {
+      nodes.currentPassword.value = '';
+      nodes.newPassword.value = '';
+      nodes.confirmPassword.value = '';
+    }
+
     // ---- 渲染 ----
     function render() {
       const busyNow = busy;
@@ -65,6 +73,12 @@
       nodes.authToggle.hidden = Boolean(user) || mode === 'setup';
       nodes.authToggle.disabled = busyNow || mode === 'setup';
       nodes.authPassword.autocomplete = (user || mode === 'login') ? 'current-password' : 'new-password';
+      // 修改密码表单：仅登录后显示；忙碌或未登录时禁用输入
+      nodes.passwordForm.hidden = !user;
+      nodes.currentPassword.disabled = busyNow || !user;
+      nodes.newPassword.disabled = busyNow || !user;
+      nodes.confirmPassword.disabled = busyNow || !user;
+      nodes.changePasswordButton.disabled = busyNow || !user;
       if (user) {
         nodes.authStatus.textContent = '已登录：' + user.username;
         nodes.legacyClaimRow.hidden = true;
@@ -156,6 +170,7 @@
         if (editorUser && editorUser.id !== nextUser.id) hooks.clearEditor();
         editorUser = nextUser;
         nodes.authPassword.value = '';
+        clearPasswordFields(); // 账户变更：不把旧密码字段带给新账户
         render();
         await hooks.onAuthenticated(nextUser);
       } catch (err) {
@@ -190,6 +205,7 @@
         editorUser = null;
         serverApi.setUser(null);
         mode = 'login';
+        clearPasswordFields(); // 退出：防止旧密码输入残留
         hooks.clearEditor();
         hooks.onRequired();
       } catch (err) {
@@ -207,13 +223,53 @@
       user = null;
       serverApi.setUser(null);
       mode = 'login';
+      clearPasswordFields(); // 会话失效：清空修改密码输入，避免旧密码残留
       showError('登录已失效或账号已切换，请重新登录；未保存内容仍保留。');
       render();
       hooks.onRequired();
     }
 
+    // ---- 修改密码：成功后服务端吊销全部会话，转回登录态（保留资料编辑） ----
+    async function handlePasswordSubmit(event) {
+      event.preventDefault();
+      if (isBusy() || !user) return;
+      if (!nodes.passwordForm.checkValidity()) return;
+
+      const currentPassword = nodes.currentPassword.value;
+      const newPassword = nodes.newPassword.value;
+      if (newPassword !== nodes.confirmPassword.value) {
+        showError('两次输入的新密码不一致，请重新输入。');
+        return;
+      }
+
+      const username = user.username; // 成功后表单可能已变更，先捕获
+      if (!window.confirm('修改密码会退出此账户的所有设备，需要用新密码重新登录；未保存资料保留。确定吗？')) return;
+
+      setBusy(true);
+      clearError();
+      render();
+      try {
+        await serverApi.authChangePassword(currentPassword, newPassword);
+        // 成功：所有会话已被吊销+cookie已清，用既有authRequired逻辑转回登录态；
+        // 不调 onAuthenticated、不清编辑器，未保存资料保留
+        handleAuthRequired();
+        nodes.authPassword.value = '';
+        nodes.authUsername.value = username;
+        showError('密码已修改，请用新密码重新登录；未保存资料仍保留。');
+      } catch (err) {
+        // 400：当前密码错误等，保持登录与资料填写；401/403 由 handleAuthRequired 提示
+        if (!(err && (err.status === 401 || err.status === 403))) {
+          showError('修改密码失败：' + describe(err, '请稍后再试。'));
+        }
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
     // ---- 事件绑定与导出 ----
     nodes.authForm.addEventListener('submit', handleSubmit);
+    nodes.passwordForm.addEventListener('submit', handlePasswordSubmit);
     nodes.authToggle.addEventListener('click', handleToggle);
     nodes.logoutButton.addEventListener('click', handleLogout);
     window.addEventListener('studio-auth-required', handleAuthRequired);

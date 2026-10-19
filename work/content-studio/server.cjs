@@ -192,7 +192,7 @@ async function handleApi(request, response, pathname) {
         return sendJson(response, 200, { ok: true });
     }
     // ---- 账号接口（匿名可访问，同本机 Host/Origin 检查，不开放 CORS）----
-    let match = pathname.match(/^\/api\/auth\/(me|setup|register|login|logout)$/);
+    let match = pathname.match(/^\/api\/auth\/(me|setup|register|login|logout|password)$/);
     if (match) {
         const action = match[1];
         if (action === 'me') {
@@ -201,6 +201,20 @@ async function handleApi(request, response, pathname) {
             const user = token ? await store.auth.current(token) : null;
             const authStatus = store.auth.status();
             return sendJson(response, 200, { user, needsSetup: authStatus.needsSetup, legacyDraftCount: authStatus.legacyDraftCount });
+        }
+        // 修改密码：登录即需 POST，走独立的凭证检查；匿名或 405 不走通用限流。
+        if (action === 'password') {
+            if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
+            const token = readSessionToken(request);
+            if (!token) throw fail(401, '请先登录');
+            const user = await store.auth.current(token);
+            if (!user) throw fail(401, '请先登录');
+            checkStudioUser(request, user, true);
+            checkAuthRate();
+            const payload = await readJson(request, authBodyMaxBytes);
+            await store.auth.changePassword(token, payload.currentPassword, payload.newPassword);
+            // 已改使全部 session 失效，通知调用端清除本 cookie
+            return sendJson(response, 200, { changed: true }, { 'Set-Cookie': clearSessionCookie() });
         }
         if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
         if (action === 'logout') {

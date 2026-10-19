@@ -26,5 +26,5 @@ jobs:
         with:
           node-version: '22.21.0'
           package-manager-cache: false
-      - name: Test accounts, versions, public copies and backups
-        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs
+      - name: Test accounts, passwords, versions, public copies and backups
+        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs

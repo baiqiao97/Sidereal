@@ -62,7 +62,11 @@ function createAuth(db) {
         deleteExpiredSessions: db.prepare('DELETE FROM sessions WHERE expiresAt <= ?'),
         sessionUser: db.prepare('SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.userId WHERE s.tokenHash = ? AND s.expiresAt > ?'),
         unownedDrafts: db.prepare('SELECT COUNT(*) AS c FROM drafts d LEFT JOIN draft_owners o ON o.draftId = d.id WHERE o.draftId IS NULL'),
-        claimUnownedDrafts: db.prepare('INSERT INTO draft_owners (draftId, userId) SELECT d.id, ? FROM drafts d LEFT JOIN draft_owners o ON o.draftId = d.id WHERE o.draftId IS NULL')
+        claimUnownedDrafts: db.prepare('INSERT INTO draft_owners (draftId, userId) SELECT d.id, ? FROM drafts d LEFT JOIN draft_owners o ON o.draftId = d.id WHERE o.draftId IS NULL'),
+        userCredentialsById: db.prepare('SELECT id, salt, passwordHash FROM users WHERE id = ?'),
+        tokenSessionUser: db.prepare('SELECT userId FROM sessions WHERE tokenHash = ? AND expiresAt > ?'),
+        casUpdatePassword: db.prepare('UPDATE users SET salt = ?, passwordHash = ? WHERE id = ? AND salt = ? AND passwordHash = ?'),
+        deleteSessionsByUser: db.prepare('DELETE FROM sessions WHERE userId = ?')
     };
 
     function runTransaction(action) {
@@ -153,7 +157,14 @@ function createAuth(db) {
         if (user) {
             const passwordHash = await hashPassword(password, user.salt);
             if (safeEqualHex(passwordHash, user.passwordHash)) {
-                const token = runTransaction(() => createSession(user.id));
+                const token = runTransaction(() => {
+                    // 异步计算 hash 期间密码可能已修改；重读校验与创建会话在同一事务内完成
+                    const current = statements.userCredentialsById.get(user.id);
+                    if (!current || current.id !== user.id || current.salt !== user.salt || current.passwordHash !== user.passwordHash) {
+                        throw fail(401, '用户名或密码不正确');
+                    }
+                    return createSession(user.id);
+                });
                 return { user: { id: user.id, username: user.username }, token };
             }
         } else {
@@ -171,12 +182,39 @@ function createAuth(db) {
         return row ? { id: row.id, username: row.username } : null;
     }
 
+    // 修改密码：先完成异步哈希，再在事务内核对旧凭据并更新，防止并发覆盖
+    async function changePassword(token, currentPassword, newPassword) {
+        const user = current(token);
+        if (!user) throw fail(401, '请先登录');
+        validatePassword(currentPassword);
+        validatePassword(newPassword);
+        // 会话对应的用户必须仍存在
+        const row = statements.userCredentialsById.get(user.id);
+        if (!row) throw fail(401, '请先登录');
+        const currentHash = await hashPassword(currentPassword, row.salt);
+        if (!safeEqualHex(currentHash, row.passwordHash)) throw fail(400, '当前密码不正确');
+        const freshSalt = randomBytes(16).toString('hex');
+        const passwordHash = await hashPassword(newPassword, freshSalt);
+        // 事务内的写操作
+        runTransaction(() => {
+            // 结束前重验证：token 还在，且仍映射到同用户
+            const session = statements.tokenSessionUser.get(sha256(token), Date.now());
+            if (!session || session.userId !== user.id) throw fail(401, '请先登录');
+            // 防止新的 hash 被旧 hash 覆盖：旧 salt/hash CAS 到新值
+            const r = statements.casUpdatePassword.run(freshSalt, passwordHash, user.id, row.salt, row.passwordHash);
+            if (r.changes !== 1) throw fail(409, '密码已被其他操作修改，请重新登录后再试');
+            // 注销用户全部会话（含调用者）
+            statements.deleteSessionsByUser.run(user.id);
+        });
+        return { changed: true };
+    }
+
     function logout(token) {
         if (typeof token !== 'string' || !/^[0-9a-f]{64}$/.test(token)) return;
         statements.deleteSession.run(sha256(token));
     }
 
-    return { status, setup, register, login, current, logout };
+    return { status, setup, register, login, current, logout, changePassword };
 }
 
 module.exports = { createAuth };
