@@ -362,6 +362,31 @@ async function handleApi(request, response, pathname) {
         }
         return;
     }
+    // ---- 回收站接口：与草稿接口同样必须登录；写操作需 X-Studio-User，GET 带了就校验 ----
+    let trashUser = null;
+    if (/^\/api\/trash(\/|$)/.test(pathname)) {
+        const token = readSessionToken(request);
+        trashUser = token ? await store.auth.current(token) : null;
+        if (!trashUser) throw fail(401, '请先登录');
+        checkStudioUser(request, trashUser, method !== 'GET');
+    }
+    if (/^\/api\/trash\/?$/.test(pathname)) {
+        if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
+        return sendJson(response, 200, store.listTrash(trashUser.id));
+    }
+    match = pathname.match(/^\/api\/trash\/([^/]+)\/restore$/);
+    if (match) {
+        if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
+        const payload = await readJson(request, authBodyMaxBytes);
+        return sendJson(response, 200, store.restoreTrash(match[1], payload.expectedTrashToken, trashUser.id));
+    }
+    match = pathname.match(/^\/api\/trash\/([^/]+)$/);
+    if (match) {
+        if (method !== 'DELETE') throw fail(405, 'Method not allowed', 'DELETE');
+        const payload = await readJson(request, authBodyMaxBytes);
+        store.purgeTrash(match[1], payload.expectedTrashToken, trashUser.id);
+        return response.writeHead(204, { 'Cache-Control': 'no-store' }).end();
+    }
     if (/^\/api\/publications\/?$/.test(pathname)) {
         if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
         return sendJson(response, 200, store.listPublications());

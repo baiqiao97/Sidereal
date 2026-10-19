@@ -50,15 +50,23 @@ function createStore(dbPath) {
             version INTEGER NOT NULL,
             publishedAt TEXT NOT NULL
         );
+        -- 回收站标记：仅存删除时间与一次性令牌；删除草稿时 CASCADE 连带清除
+        CREATE TABLE IF NOT EXISTS draft_trash (
+            draftId TEXT PRIMARY KEY REFERENCES drafts(id) ON DELETE CASCADE,
+            deletedAt TEXT NOT NULL,
+            trashToken TEXT NOT NULL
+        );
     `);
     // 业务表建完后接入账号体系：auth.cjs 在同一连接上建 users/sessions/draft_owners
     const auth = createAuth(db);
 
     const statements = {
-        // 归属语句：草稿只能被其所有者读写
-        owner: db.prepare('SELECT userId FROM draft_owners WHERE draftId = ?'),
+        // 归属语句：草稿只能被其所有者读写；已入回收站的草稿视同不存在（回收站操作用 rawOwner）
+        owner: db.prepare('SELECT o.userId FROM draft_owners o JOIN drafts d ON d.id = o.draftId WHERE o.draftId = ? AND NOT EXISTS (SELECT 1 FROM draft_trash t WHERE t.draftId = d.id)'),
+        // 不看回收站的原始归属：仅供回收站操作使用
+        rawOwner: db.prepare('SELECT o.userId FROM draft_owners o JOIN drafts d ON d.id = o.draftId WHERE o.draftId = ?'),
         insertOwner: db.prepare('INSERT INTO draft_owners (draftId, userId) VALUES (?, ?)'),
-        ownedIds: db.prepare('SELECT d.id FROM drafts d JOIN draft_owners o ON o.draftId = d.id WHERE o.userId = ?'),
+        ownedIds: db.prepare('SELECT d.id FROM drafts d JOIN draft_owners o ON o.draftId = d.id WHERE o.userId = ? AND NOT EXISTS (SELECT 1 FROM draft_trash t WHERE t.draftId = d.id)'),
         draft: db.prepare('SELECT id, createdAt, currentVersion FROM drafts WHERE id = ?'),
         current: db.prepare('SELECT currentVersion FROM drafts WHERE id = ?'),
         versions: db.prepare('SELECT version, savedAt, title, description, category, fileName, fileType, LENGTH(fileData) AS fileSize FROM versions WHERE draftId = ? ORDER BY version'),
@@ -78,7 +86,12 @@ function createStore(dbPath) {
         publishedList: db.prepare(PUBLISHED_SELECT + ' ORDER BY p.publishedAt DESC, p.draftId'),
         publishedSingle: db.prepare(PUBLISHED_SELECT + ' WHERE p.draftId = ?'),
         // 按发布者用户名过滤公开列表：复用同一 SELECT，仅追加 WHERE/ORDER BY
-        publishedByName: db.prepare(PUBLISHED_SELECT + " WHERE u.username = ? ORDER BY p.publishedAt DESC, p.draftId")
+        publishedByName: db.prepare(PUBLISHED_SELECT + " WHERE u.username = ? ORDER BY p.publishedAt DESC, p.draftId"),
+        // 回收站：标记的写入/读取/删除；列表只取当前版本元数据，不含 BLOB 或历史版本
+        insertTrash: db.prepare('INSERT INTO draft_trash (draftId, deletedAt, trashToken) VALUES (?, ?, ?)'),
+        trash: db.prepare('SELECT deletedAt, trashToken FROM draft_trash WHERE draftId = ?'),
+        deleteTrash: db.prepare('DELETE FROM draft_trash WHERE draftId = ?'),
+        trashList: db.prepare('SELECT d.id, d.currentVersion AS revision, t.deletedAt, t.trashToken, v.title, v.category FROM draft_trash t JOIN drafts d ON d.id = t.draftId JOIN draft_owners o ON o.draftId = d.id JOIN versions v ON v.draftId = d.id AND v.version = d.currentVersion WHERE o.userId = ? ORDER BY t.deletedAt DESC, d.id')
     };
 
     function runTransaction(action) {
@@ -226,6 +239,8 @@ function createStore(dbPath) {
         });
     }
 
+    // 删除改为移入回收站：校验归属与期望版本后写入标记并撤回公共快照；
+    // 草稿、历史版本与归属记录全部保留，不做自动清理
     function remove(id, expectedVersion, userId) {
         checkId(id);
         if (typeof expectedVersion !== 'number' || !Number.isInteger(expectedVersion) || expectedVersion < 0) throw fail(400, 'expectedVersion 必须是非负整数');
@@ -234,7 +249,57 @@ function createStore(dbPath) {
             if (!draft) throw fail(404, '草稿不存在');
             requireOwner(id, userId);
             if (draft.currentVersion !== expectedVersion) throw fail(409, '草稿已在其他窗口修改，请刷新后重试');
-            // CASCADE 连带删除全部历史版本与归属记录
+            // 每次移入回收站都换新令牌：旧窗口拿到的旧令牌无法恢复/清空新一次的回收记录
+            statements.insertTrash.run(id, new Date().toISOString(), randomUUID());
+            statements.deletePublication.run(id);
+            return true;
+        });
+    }
+
+    // 回收站令牌校验：非空字符串且不超过 100 字符
+    function validateTrashToken(expectedTrashToken) {
+        if (typeof expectedTrashToken !== 'string' || !expectedTrashToken || expectedTrashToken.length > 100) throw fail(400, 'expectedTrashToken 必须是非空字符串');
+    }
+
+    // 回收站列表：只返回本人回收记录的元数据，最近删除在前
+    function listTrash(userId) {
+        return statements.trashList.all(userId).map(row => ({
+            id: row.id,
+            title: row.title,
+            category: row.category,
+            revision: row.revision,
+            deletedAt: row.deletedAt,
+            trashToken: row.trashToken
+        }));
+    }
+
+    // 回收站操作共用：事务内做原始归属与标记校验；非本人或无标记一律 404，不暴露他人记录
+    function requireTrashEntry(id, userId) {
+        const owner = statements.rawOwner.get(id);
+        const marker = statements.trash.get(id);
+        if (!owner || owner.userId !== userId || !marker) throw fail(404, '回收站记录不存在');
+        return marker;
+    }
+
+    // 恢复：令牌不匹配 409 提示刷新；只删除标记，草稿与历史原样保留
+    function restoreTrash(id, expectedTrashToken, userId) {
+        checkId(id);
+        validateTrashToken(expectedTrashToken);
+        return runTransaction(() => {
+            const marker = requireTrashEntry(id, userId);
+            if (marker.trashToken !== expectedTrashToken) throw fail(409, '回收站已在其他窗口更新，请刷新回收站后重试');
+            statements.deleteTrash.run(id);
+            return buildDto(id);
+        });
+    }
+
+    // 彻底删除：复用 deleteDraft，CASCADE 连带清掉历史版本、归属与回收标记
+    function purgeTrash(id, expectedTrashToken, userId) {
+        checkId(id);
+        validateTrashToken(expectedTrashToken);
+        return runTransaction(() => {
+            const marker = requireTrashEntry(id, userId);
+            if (marker.trashToken !== expectedTrashToken) throw fail(409, '回收站已在其他窗口更新，请刷新回收站后重试');
             statements.deleteDraft.run(id);
             return true;
         });
@@ -364,7 +429,7 @@ function createStore(dbPath) {
         return buildDto(newId);
     }
 
-    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, exportBackup, restoreBackup, close };
+    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, exportBackup, restoreBackup, listTrash, restoreTrash, purgeTrash, close };
 }
 
 module.exports = { createStore };

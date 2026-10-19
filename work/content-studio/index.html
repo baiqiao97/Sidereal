@@ -221,6 +221,17 @@
         <div id="draftList"></div>
     </section>
 
+    <!-- 资料回收站：仅本机服务模式且已登录时由 JS 显示；当前浏览器存储的删除不进回收站 -->
+    <section id="trashSection" hidden>
+        <h2>资料回收站</h2>
+        <p class="backup-note">账户资料移入回收站后，保留全部已保存版本和附件，直到你手动永久删除。恢复后保持未发布。当前浏览器存储不适用。</p>
+        <p>
+            <button type="button" id="trashRefresh">刷新回收站</button>
+        </p>
+        <p id="trashStatus" class="status-line" role="status" aria-live="polite"></p>
+        <div id="trashList"></div>
+    </section>
+
     <!-- 版本历史：某条资料的每个保存快照，可恢复为新版本 -->
     <section id="historySection" hidden>
         <h2>版本历史</h2>
