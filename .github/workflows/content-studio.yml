@@ -18,13 +18,26 @@ jobs:
   api-regression:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      matrix:
+        node: ['22.21.0', '22']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: '22.21.0'
+          node-version: ${{ matrix.node }}
           package-manager-cache: false
       - name: Test accounts, passwords, versions, public copies and backups
-        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs
+        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs work/content-studio/test/hosted.test.cjs
+
+  proxy-config:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Validate reverse proxy example without starting it
+        run: docker run --rm --network none -v "$PWD/work/content-studio/Caddyfile.example:/etc/caddy/Caddyfile:ro" caddy:2.11.7-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
