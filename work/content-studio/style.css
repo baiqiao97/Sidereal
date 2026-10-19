@@ -1,0 +1,371 @@
+body {
+    color: #f5f5f5;
+    background-color: #101827;
+}
+
+#paragraph1{
+    margin-right: 300px;
+}
+
+/* 文件选择器保持原生可见控件：键盘 Tab 可聚焦、回车/空格打开选择窗口。
+   （原来 #fileInput{display:none} 已删除，避免键盘用户无法选文件） */
+
+label {
+    border: 1px solid lightgray;
+    display: inline-block;
+    width: 400px;
+    padding: 12px;
+    margin-left: 24px;
+    box-sizing: border-box;
+}
+
+h2 {
+    color: lightblue;
+}
+
+.intro{
+    color: lightgray;
+    padding: 12px;
+    border: 1px solid lightgray;
+    margin-left: 24px;
+}
+
+/* ===== 第一阶段核对区域样式（保留） ===== */
+
+/* 标题为空白等校验失败时的错误提示 */
+.draft-error {
+    color: #ff9aa2;
+    background-color: #3a1420;
+    border: 1px solid #b3545e;
+    padding: 10px 12px;
+    margin: 16px 0 16px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+/* 表单外的核对结果区域 */
+#reviewSection {
+    border: 1px solid lightgray;
+    padding: 4px 16px 16px;
+    margin: 24px 0 24px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+/* 提醒：这只核对页面里的草稿，核对本身不保存 */
+.review-note {
+    color: lightgray;
+}
+
+.review-list dt {
+    font-weight: bold;
+    color: lightblue;
+    margin-top: 10px;
+}
+
+.review-list dd {
+    margin: 4px 0 0 0;
+    /* 简介保留用户自己敲的换行（与列表/历史保持一致） */
+    white-space: pre-line;
+    /* 超长的标题/简介/文件名换行，不撑破布局 */
+    overflow-wrap: anywhere;
+}
+
+/* ===== 本地保存相关按钮、状态行 ===== */
+
+/* 原生按钮统一样式：焦点用 outline 显示，键盘用户能看到当前位置 */
+button {
+    background-color: #1c2a45;
+    color: #f5f5f5;
+    border: 1px solid lightgray;
+    border-radius: 4px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font: inherit;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid lightblue;
+    outline-offset: 2px;
+}
+
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+input[type="file"] {
+    color: lightgray;
+    margin-top: 8px;
+    max-width: 100%;
+}
+
+/* 保存说明文字 */
+.storage-note {
+    color: lightgray;
+    margin: 0 0 12px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+/* 附件状态 / 编辑状态 / 保存结果等一行行状态文字 */
+.status-line {
+    color: lightgray;
+    margin: 12px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.editing-status {
+    color: lightblue;
+}
+
+/* 数据库打开失败等错误状态（配 #storageStatus） */
+.status-error {
+    color: #ff9aa2;
+}
+
+/* ===== 资料列表 ===== */
+
+.library-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 24px;
+    max-width: 424px;
+    box-sizing: border-box;
+}
+
+/* 搜索/筛选的行内标签不用表单那种大边框 */
+.library-tools label {
+    border: none;
+    width: auto;
+    display: inline;
+    padding: 0;
+    margin: 0;
+}
+
+#draftSearch,
+#categoryFilter,
+#publicSearch,
+#publicCategory {
+    background-color: #0d1420;
+    color: #f5f5f5;
+    border: 1px solid lightgray;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    max-width: 100%;
+    font: inherit;
+}
+
+#draftSearch,
+#publicSearch {
+    flex: 1 1 150px;
+}
+
+#draftCount {
+    color: lightgray;
+    margin: 8px 24px;
+}
+
+#draftList {
+    margin: 0 24px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+.draft-card {
+    border: 1px solid lightgray;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+}
+
+.draft-card h3 {
+    color: lightblue;
+    margin: 0 0 6px;
+    overflow-wrap: anywhere;
+}
+
+.draft-card p {
+    margin: 4px 0;
+    overflow-wrap: anywhere;
+}
+
+/* 简介保留用户自己敲的换行，不会折成一行 */
+.draft-description {
+    white-space: pre-line;
+}
+
+.draft-actions button {
+    margin: 8px 8px 0 0;
+}
+
+.empty-hint {
+    color: lightgray;
+}
+
+/* ===== 版本历史 ===== */
+
+#historyDraftLabel {
+    margin: 12px 24px;
+}
+
+#historyList {
+    margin: 0 24px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+.history-item {
+    border: 1px solid lightgray;
+    padding: 12px;
+    margin-bottom: 12px;
+    box-sizing: border-box;
+}
+
+.history-item .history-head {
+    color: lightblue;
+    font-weight: bold;
+}
+
+.history-item p {
+    margin: 4px 0;
+    overflow-wrap: anywhere;
+}
+
+.history-item button {
+    margin-top: 8px;
+}
+
+/* ===== 公共仓库预览（index 入口 + 独立 public.html 页面） ===== */
+
+/* index 中的公共仓库入口区块 */
+#publicSection {
+    border: 1px solid lightgray;
+    padding: 4px 16px 16px;
+    margin: 24px 0 24px 24px;
+    max-width: 424px;
+    box-sizing: border-box;
+}
+
+/* public.html 的显眼说明 */
+.public-intro {
+    color: lightgray;
+    padding: 12px;
+    border: 1px solid lightgray;
+    margin: 0 24px 16px;
+    max-width: 424px;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+/* 深色底上让链接清晰可见；长链接可换行不横向溢出 */
+.public-link {
+    color: lightblue;
+    overflow-wrap: anywhere;
+}
+
+/* 公共列表容器：排版与 #draftList 一致 */
+#publicList {
+    margin: 0 24px 24px;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+/* ===== 账户登录区（本机服务模式，JS 控制 hidden） ===== */
+
+#authSection {
+    border: 1px solid lightgray;
+    padding: 4px 16px 16px;
+    margin: 24px;
+    max-width: 424px;
+    box-sizing: border-box;
+}
+
+/* 覆盖全局 label 的 400px+边框，避免嵌套在 424px 里横向溢出 */
+#authSection label {
+    border: none;
+    display: block;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
+}
+
+#authSection input[type="text"],
+#authSection input[type="password"] {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    box-sizing: border-box;
+    background-color: #0d1420;
+    color: #f5f5f5;
+    border: 1px solid lightgray;
+    font: inherit;
+}
+
+/* 旧资料归属复选框保持一行式小标签 */
+#legacyClaimRow label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: lightgray;
+}
+
+/* 状态行/错误提示嵌套在框内时去掉外层的 24px/16px 侧距，避免溢出 */
+#authSection .status-line,
+#authSection .draft-error {
+    margin: 0 0 12px 0;
+    max-width: 100%;
+}
+
+/* 登录/注册/退出按钮间距 */
+#authForm p:not([hidden]),
+#authSection > p:not([hidden]) {
+    margin: 12px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* ===== 手机窄屏（约 390px 宽）适配：两侧留白改小，内容不横向溢出 ===== */
+@media (max-width: 450px) {
+    label {
+        width: calc(100% - 32px);
+        margin-left: 16px;
+    }
+
+    textarea {
+        width: 100%;
+    }
+
+    #paragraph1 {
+        margin-right: 16px;
+    }
+
+    .intro,
+    .draft-error,
+    .storage-note,
+    .status-line,
+    .library-tools,
+    #publicSection,
+    .public-intro,
+    #draftCount,
+    #draftList,
+    #publicList,
+    #historyList,
+    #authSection {
+        margin-left: 16px;
+        margin-right: 16px;
+        max-width: calc(100% - 32px);
+    }
+}

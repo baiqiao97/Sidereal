@@ -1,0 +1,30 @@
+name: Content Studio
+
+on:
+  pull_request:
+    paths:
+      - 'work/content-studio/**'
+      - '.github/workflows/content-studio.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'work/content-studio/**'
+      - '.github/workflows/content-studio.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  api-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '22.21.0'
+          package-manager-cache: false
+      - name: Test accounts, versions and public copies
+        run: node --test work/content-studio/test/api.test.cjs
