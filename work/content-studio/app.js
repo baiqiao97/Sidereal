@@ -43,6 +43,11 @@ const historyLabel = document.getElementById("historyDraftLabel");
 // 公共仓库预览入口（index 内；仅本机服务模式显示）
 const publicSection = document.getElementById("publicSection");
 
+// 资料备份与恢复（index 内；仅本机服务模式显示）
+const backupSection = document.getElementById("backupSection");
+const backupInput = document.getElementById("backupInput");
+const restoreBackupButton = document.getElementById("restoreBackupButton");
+
 // ---- 固定文案 ----
 // 下拉框选项值到中文名称的对照表，展示时用这份数据翻译
 const CATEGORY_TEXT = {
@@ -91,6 +96,9 @@ let storageMode = "browser";
 let accounts = null;
 // 登录状态变化后，丢弃之前发出的列表请求，避免退出或换号后重显旧资料。
 let accountEpoch = 0;
+// 当前登录账户（仅保存在内存里）；用于确认文案与恢复前守卫，不本地持久化，
+// 也不据此自动重新登录（换号时恢复如未过期交给 epoch 守卫丢弃结果）
+let currentAccount = null;
 
 // 当前是否应禁用写操作：存储失败，或 server 模式下尚未登录
 function writesDisabled() {
@@ -196,6 +204,9 @@ function setStartupDisabled(disabled) {
     saveDraftButton.disabled = merged;
     newDraftButton.disabled = merged;
     removeAttachmentButton.disabled = merged;
+    restoreBackupButton.disabled = merged;
+    // 备份文件的选择随之禁用：未登录/存储失效/操作锁定期间不允许挑备份
+    backupInput.disabled = merged || storageMode !== "server";
 }
 
 /** 读库/列表失败的统一停用：不清空、不假装没有数据 */
@@ -204,6 +215,9 @@ function disableSaveUi(message) {
     saveDraftButton.disabled = true;
     newDraftButton.disabled = true;
     removeAttachmentButton.disabled = true;
+    restoreBackupButton.disabled = true;
+    // 备份文件的选择一并禁用：存储已失效时不允许继续挑选备份文件
+    backupInput.disabled = true;
     librarySection.hidden = false;
     const empty = document.createElement("p");
     empty.className = "empty-hint";
@@ -631,6 +645,16 @@ function buildDraftCard(draft) {
         addPublishActions(actions, draft);
     }
 
+    // 仅服务器模式出现：导出这份资料的 .studio-backup 备份文件
+    if (storageMode === "server") {
+        const exportButton = document.createElement("button");
+        exportButton.type = "button";
+        exportButton.className = "export-backup";
+        exportButton.textContent = "导出备份";
+        exportButton.addEventListener("click", function () { exportBackupFile(draft); });
+        actions.appendChild(exportButton);
+    }
+
     // 有附件才有下载按钮：浏览器附件用 Blob URL，服务器附件用下载地址
     if (draft.file && (draft.file.blob || draft.file.url)) {
         const downloadButton = document.createElement("button");
@@ -745,6 +769,123 @@ async function unpublishDraft(draft) {
         newDraftButton.disabled = writesDisabled();
     }
 }
+
+// ============================================================
+// 资料备份与恢复（仅服务器模式）：
+// - 导出：把一条资料的 .studio-backup 备份（全部已保存版本+附件）下载到本机；
+// - 恢复：把备份文件传给本机服务，生成一条全新的未发布草稿（新 id、全部历史），
+//   原有资料不会改动；恢复期间不动编辑器/列表/历史，只刷新列表。
+// 两个操作共用 operationBusy；备份文件不含账户凭据、不在前端解析备份格式。
+// ============================================================
+
+// 导出已渲染按钮；恢复时尊重 writesDisabled（存储失败/未登录则保持禁用）
+function disableBackupButtons(disabled) {
+    document.querySelectorAll(".export-backup").forEach(function (button) {
+        button.disabled = disabled || writesDisabled();
+    });
+}
+
+/** 生成安全的备份文件名；草稿 id 本身已安全，仍做一次白名单清洗兜底 */
+function backupFileName(draftId) {
+    const safeId = String(draftId).replace(/[^A-Za-z0-9._-]/g, "_");
+    return "sidereal-" + safeId + ".studio-backup";
+}
+
+async function exportBackupFile(draft) {
+    if (storageMode !== "server" || writesDisabled() || operationBusy) return;
+    hideError();
+    setStorageStatus("");
+    // 锁住操作并记住当前账号纪元；期间换号/登出则丢弃迟到结果
+    operationBusy = true;
+    setStartupDisabled(true);
+    storageModeSelect.disabled = true;
+    disableBackupButtons(true);
+    const exportEpoch = accountEpoch;
+    try {
+        const confirmed = window.confirm(
+            "确定导出“" + draft.title + "”的备份文件吗？备份只包含这条资料已保存的全部版本和附件；" +
+            "表单里未保存的修改不会包含在内，导出也不会改动这条资料。"
+        );
+        if (!confirmed) return;
+        const blob = await serverApi.exportBackup(draft.id);
+        if (exportEpoch !== accountEpoch) return;
+        // 临时 Blob URL 触发下载，用完延迟释放；备份原样落盘，不在前端解析
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = backupFileName(draft.id);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+        setStorageStatus("已导出“" + draft.title + "”的备份文件（" + link.download + "），原资料未改动。");
+    } catch (error) {
+        if (exportEpoch === accountEpoch) {
+            showError("导出备份失败：" + (error && error.message ? error.message : "本机服务出错") + "。资料与表单内容均未改动，请重试。");
+        }
+    } finally {
+        operationBusy = false;
+        storageModeSelect.disabled = false;
+        setStartupDisabled(false);
+        disableBackupButtons(false);
+    }
+}
+
+async function restoreBackupFromFile() {
+    if (storageMode !== "server" || writesDisabled() || operationBusy) return;
+    if (!currentAccount) return;
+    const file = backupInput.files && backupInput.files[0];
+    if (!file) {
+        showError("请先选择 .studio-backup 备份文件，再点“恢复备份”。");
+        return;
+    }
+    if (file.size > serverApi.MAX_BACKUP_BYTES) {
+        showError("备份文件超过 512MiB 上限，未上传。请确认文件大小后重新选择。");
+        return;
+    }
+    hideError();
+    setStorageStatus("");
+    operationBusy = true;
+    setStartupDisabled(true);
+    storageModeSelect.disabled = true;
+    disableBackupButtons(true);
+    // 固定确认时的目标账户与纪元；期间换号/登出由 epoch 守卫丢弃迟到结果
+    const targetAccount = currentAccount;
+    const restoreEpoch = accountEpoch;
+    try {
+        const confirmed = window.confirm(
+            "确定用备份文件“" + file.name + "”恢复到账户“" + targetAccount.username + "”吗？" +
+            "会生成一条全新的未发布资料（新 id），包含备份里的全部已保存版本和附件；" +
+            "它和原备份来源互不影响，也不会覆盖任何现有资料。"
+        );
+        if (!confirmed) return;
+        const created = await serverApi.restoreBackup(file);
+        if (restoreEpoch !== accountEpoch) return;
+        await renderDrafts();
+        if (restoreEpoch !== accountEpoch) return;
+        // 服务端恢复成功，但列表刷新失败：不冒充成功、保留已选文件，避免误重复恢复
+        if (storageFailed) {
+            showError("备份已恢复，但资料列表刷新失败。请刷新后核对，避免重复恢复。");
+            return;
+        }
+        setStorageStatus("已恢复备份“" + file.name + "”为账户“" + targetAccount.username +
+            "”的新资料“" + (created && created.title ? created.title : file.name) + "”（未发布）。");
+        // 只清备份选择框：防止误点重复恢复；编辑器/表单/历史/筛选一概不动
+        backupInput.value = "";
+    } catch (error) {
+        if (restoreEpoch === accountEpoch) {
+            showError("恢复备份失败：" + (error && error.message ? error.message : "本机服务出错") +
+                "。已选择的备份文件保留。如果不确定服务端是否已恢复，请先在本资料列表里核对后再重试，避免重复恢复。");
+        }
+    } finally {
+        operationBusy = false;
+        storageModeSelect.disabled = false;
+        setStartupDisabled(false);
+        disableBackupButtons(false);
+    }
+}
+
+restoreBackupButton.addEventListener("click", restoreBackupFromFile);
 
 // ============================================================
 // 复制到本机账户（仅浏览器模式出现）：把用户明确操作的一条
@@ -1165,6 +1306,9 @@ storageMode = readStoredMode();
 storageModeSelect.value = storageMode;
 // 公共仓库预览只在服务器模式显示；浏览器模式不显示，也绝不迁移/上传任何资料
 publicSection.hidden = storageMode !== "server";
+// 备份区只在服务器模式显示；恢复按钮进一步由登录状态守卫（配合 setStartupDisabled）
+backupSection.hidden = storageMode !== "server";
+backupInput.disabled = storageMode !== "server";
 setStorageNote();
 connectStorage();
 
@@ -1196,6 +1340,7 @@ function connectStorage() {
                     clearEditor: function () { clearEditor(); },
                     onAuthenticated: async function (user) {
                         accountEpoch += 1;
+                        currentAccount = user;
                         storageFailed = false;
                         dbPromise = Promise.resolve({ kind: "server" });
                         await renderDrafts();
@@ -1206,6 +1351,7 @@ function connectStorage() {
                     },
                     onRequired: function () {
                         accountEpoch += 1;
+                        currentAccount = null;
                         serverApi.setUser(null);
                         librarySection.hidden = true;
                         draftList.textContent = "";

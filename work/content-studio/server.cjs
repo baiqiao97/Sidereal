@@ -1,6 +1,8 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pipeline } = require('node:stream/promises');
+const { MAX_BACKUP_BYTES } = require('./backup.cjs');
 const { createStore } = require('./store.cjs');
 
 // 启动：node server.cjs <root> [port] [数据目录]，数据默认存 root/data
@@ -272,6 +274,28 @@ async function handleApi(request, response, pathname) {
         if (!file) throw fail(404, '该版本没有附件');
         return sendAttachment(response, file);
     }
+    match = pathname.match(/^\/api\/drafts\/([^/]+)\/backup$/);
+    if (match) {
+        if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
+        const id = match[1];
+        const dir = await fs.promises.mkdtemp(path.join(dataDir, '.backup-'));
+        try {
+            const filePath = path.join(dir, 'archive.studio-backup');
+            store.exportBackup(id, filePath, currentUser.id);
+            const size = (await fs.promises.stat(filePath)).size;
+            const safeId = String(id).replace(/[^\w-]+/g, '_');
+            response.writeHead(200, {
+                'Content-Type': 'application/octet-stream',
+                'Content-Disposition': `attachment; filename=sidereal-${safeId}.studio-backup`,
+                'Cache-Control': 'no-store',
+                'Content-Length': String(size)
+            });
+            await pipeline(fs.createReadStream(filePath), response);
+        } finally {
+            await fs.promises.rm(dir, { recursive: true, force: true });
+        }
+        return;
+    }
     if (/^\/api\/publications\/?$/.test(pathname)) {
         if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
         return sendJson(response, 200, store.listPublications());
@@ -300,6 +324,49 @@ async function handleApi(request, response, pathname) {
         checkStudioUser(request, user, true);
         const payload = await readJson(request, authBodyMaxBytes);
         return sendJson(response, 201, store.importPublication(match[1], payload.expectedPublishedVersion, user.id));
+    }
+    if (pathname === '/api/backups/restore') {
+        if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
+        const token = readSessionToken(request);
+        const user = token ? await store.auth.current(token) : null;
+        if (!user) throw fail(401, '请先登录');
+        checkStudioUser(request, user, true);
+        const rawType = request.headers['content-type'];
+        const typeValue = Array.isArray(rawType) ? rawType.join(',') : rawType;
+        if (!/^application\/octet-stream\s*(?:;|$)/i.test(String(typeValue || ''))) throw fail(400, '必须以 application/octet-stream 提交备份');
+        const declared = Number(request.headers['content-length']);
+        if (Number.isFinite(declared) && declared > MAX_BACKUP_BYTES) throw fail(413, '备份超过 512MiB');
+        const dir = await fs.promises.mkdtemp(path.join(dataDir, '.backup-'));
+        let aborted = Boolean(request.aborted);
+        const onAbort = () => { aborted = true; };
+        request.once('aborted', onAbort);
+        try {
+            const filePath = path.join(dir, 'archive.studio-backup');
+            let total = 0;
+            const handle = await fs.promises.open(filePath, 'wx');
+            try {
+                for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+                    total += chunk.length;
+                    if (total > MAX_BACKUP_BYTES) {
+                        request.pause();
+                        throw fail(413, '备份超过 512MiB');
+                    }
+                    await handle.writeFile(chunk);
+                }
+            } finally {
+                await handle.close();
+            }
+            if (aborted || (Number.isFinite(declared) && total < declared)) throw fail(400, '连接中断，备份上传不完整');
+            const dto = store.restoreBackup(filePath, user.id);
+            return sendJson(response, 201, dto);
+        } catch (error) {
+            if (error && Number.isInteger(error.status)) throw error;
+            if (aborted) throw fail(400, '连接中断，备份上传不完整');
+            throw error;
+        } finally {
+            request.off('aborted', onAbort);
+            await fs.promises.rm(dir, { recursive: true, force: true });
+        }
     }
     throw fail(404, 'API 路由不存在');
 }

@@ -5,6 +5,8 @@
 const serverApi = (function () {
     // 与服务端一致：单个附件上限 50MiB
     const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+    // 与服务端一致：备份文件上限 512MiB
+    const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
 
     // 当前用户 id，仅保存在内存中；由 app 在登录/登出后调用 setUser 维护
     let currentUserId = null;
@@ -14,10 +16,12 @@ const serverApi = (function () {
     }
 
     // 私有请求：/api/drafts 需要 X-Studio-User，401/403 派发登录提醒；
-    // 公共资料导入（保存到我的草稿）会创建私有草稿，也按私有请求处理
+    // 公共资料导入（保存到我的草稿）会创建私有草稿，也按私有请求处理；
+    // 备份恢复会创建新的私有草稿（精确匹配该地址），同样带身份并遵守迟到账号守卫
     function isPrivateRequest(url) {
         return url.indexOf("/api/drafts") === 0 ||
-            /^\/api\/publications\/[^/]+\/import$/.test(url);
+            /^\/api\/publications\/[^/]+\/import$/.test(url) ||
+            url === "/api/backups/restore";
     }
 
     // 统一 fetch：为私有请求注入 X-Studio-User 头（内存中的当前用户 id）；
@@ -89,6 +93,9 @@ const serverApi = (function () {
     }
 
     return {
+        // 备份文件大小上限（512MiB）；app 层在禁止性校验/提示里复用该值
+        MAX_BACKUP_BYTES: MAX_BACKUP_BYTES,
+
         health: function () {
             return request("/api/health", { method: "GET" });
         },
@@ -202,6 +209,37 @@ const serverApi = (function () {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ expectedPublishedVersion: expectedPublishedVersion })
             }).then(normalizeDraft);
+        },
+
+        // ---- 资料备份与恢复：二进制请求，不走 FormData，也不在前端解析备份格式 ----
+
+        // 导出一条资料的 .studio-backup 备份文件；成功返回 Blob 交给上层下载；
+        // 非 2xx 解析 JSON 错误文案并保留 HTTP status，方便上层给出可读提示
+        exportBackup: async function (id) {
+            const response = await checkedFetch(draftUrl(id) + "/backup", { method: "GET" });
+            if (response.ok) return response.blob();
+            let body = null;
+            try {
+                body = await response.json();
+            } catch (error) {
+                body = null;
+            }
+            const failure = new Error((body && body.error) || ("导出备份失败（HTTP " + response.status + "）"));
+            failure.status = response.status;
+            throw failure;
+        },
+
+        // 把 .studio-backup 文件交给服务端恢复：创建一条全新的未发布草稿（新 id、全部历史），
+        // 原有资料不会改动；上传前在客户端先拦截超 512MiB 的备份；成功 201 返回新草稿 DTO
+        restoreBackup: async function (file) {
+            if (file && file.size > MAX_BACKUP_BYTES) {
+                throw new Error("备份文件超过 512MiB 上限，未上传，请确认文件大小后重试");
+            }
+            return normalizeDraft(await request("/api/backups/restore", {
+                method: "POST",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: file
+            }));
         },
 
         // ---- 认证适配：适配层不做表单验证、不自行 setUser、不保存密码/token ----
