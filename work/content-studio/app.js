@@ -616,6 +616,16 @@ function buildDraftCard(draft) {
     actions.appendChild(historyButton);
     actions.appendChild(deleteButton);
 
+    // 仅浏览器模式出现：把这条资料最新一次保存的内容复制为本机服务里一条新草稿
+    if (storageMode === "browser") {
+        const copyButton = document.createElement("button");
+        copyButton.type = "button";
+        copyButton.className = "copy-to-server";
+        copyButton.textContent = "复制到本机账户";
+        copyButton.addEventListener("click", function () { copyBrowserDraftToServer(draft.id); });
+        actions.appendChild(copyButton);
+    }
+
     // 发布/撤回按钮（仅服务器模式）；浏览器存储模式绝不出现发布按钮
     if (storageMode === "server") {
         addPublishActions(actions, draft);
@@ -733,6 +743,90 @@ async function unpublishDraft(draft) {
         operationBusy = false;
         saveDraftButton.disabled = writesDisabled();
         newDraftButton.disabled = writesDisabled();
+    }
+}
+
+// ============================================================
+// 复制到本机账户（仅浏览器模式出现）：把用户明确操作的一条
+// 已保存资料的最新快照（标题/简介/类别/附件）复制为本机服务里
+// 一条全新的未发布草稿。原资料及其版本历史原样保留；
+// 必须先确认目标账户，且复制前需在“本机服务”模式下登录过。
+// 绝不在加载或切换模式时自动迁移任何资料。
+// ============================================================
+
+// 复制期间统一禁用/恢复列表里已渲染的“复制到本机账户”按钮；
+// 恢复时尊重 writesDisabled（如存储失败则保持禁用）
+function disableCopyButtons(disabled) {
+    const merged = disabled || writesDisabled();
+    document.querySelectorAll(".copy-to-server").forEach(function (button) {
+        button.disabled = merged;
+    });
+}
+
+async function copyBrowserDraftToServer(id) {
+    if (storageMode !== "browser" || writesDisabled() || operationBusy) return;
+    // 防重从第一次 await 前开始：并发点击都会被这个共享标记拦下
+    operationBusy = true;
+    hideError();
+    setStorageStatus("");
+    setStartupDisabled(true);
+    storageModeSelect.disabled = true;
+    disableCopyButtons(true);
+    try {
+        // 重新读源资料：只复制最近一次保存的内容，绝不取当前未保存的表单值
+        const readResult = await getDraftSafe(id);
+        if (readResult === "read-error") {
+            showError("读取资料失败，未复制任何内容。请重试。");
+            return;
+        }
+        const source = readResult;
+        if (!source) {
+            showError("这条资料已不存在，无法复制。");
+            await renderDrafts();
+            return;
+        }
+
+        // 查询本机服务当前登录状态；未登录则提示手动去登录，不自动登录/建号
+        const me = await serverApi.authMe();
+        const user = me && me.user ? me.user : null;
+        if (!user) {
+            showError("未检测到已登录的本机服务账户。请先切换到“本机服务”登录或注册，再切回“当前浏览器”执行复制；不会自动登录或创建账户。");
+            return;
+        }
+
+        const confirmed = window.confirm(
+            "确定把“" + source.title + "”复制到本机服务账户“" + user.username + "”吗？" +
+            "只复制最新一次保存的标题、简介、类别和附件；本浏览器里的原资料和版本历史保持不变；" +
+            "新草稿从版本 1 开始且不会自动发布；再次复制会产生另一条独立草稿。"
+        );
+        if (!confirmed) return;
+        hideError();
+        // 固定确认时的账户；期间 Cookie 换号会被服务端拒绝
+        serverApi.setUser(user);
+        // 新 id 保证绝不覆盖源资料或其他既有服务端草稿；
+        // versions 留空，服务端把新草稿作为版本 1 开始；版本历史不上传
+        await serverApi.put({
+            id: generateId(),
+            title: source.title,
+            description: source.description || "",
+            category: source.category,
+            file: source.file || null,
+            versions: []
+        });
+        setStorageStatus("已把“" + source.title + "”复制到账户“" + user.username +
+            "”。切换到“本机服务”即可看到新的一条未发布草稿（第 1 版）；本浏览器里的原资料保留。");
+        // 不刷新、不切模式、不清编辑器、不自动发布
+    } catch (error) {
+        showError("复制未能确认保存：" + (error && error.message ? error.message : "本机服务出错") +
+            "。原资料和当前表单均保留；重试前请先在“本机服务”核对目标账户的草稿列表，避免出现重复草稿。");
+        return;
+    } finally {
+        // 浏览器模式不持有账户控制器：无论成功/取消/失败都解除钉住的账户
+        serverApi.setUser(null);
+        operationBusy = false;
+        storageModeSelect.disabled = false;
+        setStartupDisabled(false);
+        disableCopyButtons(false);
     }
 }
 
@@ -1151,7 +1245,7 @@ function setStorageNote() {
     if (!note) return;
     note.textContent = storageMode === "server"
         ? "先填内容点“核对资料”检查：核对不保存，只看当前表单；“刷新不保留”指未保存的表单内容和核对结果。已保存的资料和附件归当前登录账户所有，这台电脑上的其他浏览器也需登录同一账号才能查看；公共仓库只展示手动发布的版本，单个附件最大 50MB，目前未开放互联网。"
-        : "先填内容点“核对资料”检查：核对不保存，只看当前表单；“刷新不保留”指未保存的表单内容和核对结果。点“保存草稿”后资料和附件保存在当前浏览器，不上传、不跨设备同步，清理站点数据会删除保存内容。";
+        : "先填内容点“核对资料”检查：核对不保存，只看当前表单；“刷新不保留”指未保存的表单内容和核对结果。点“保存草稿”后资料和附件保存在当前浏览器，不上传、不跨设备同步，清理站点数据会删除保存内容。“复制到本机账户”仅复制最新已保存内容及附件，生成未发布的第1版草稿；原件和历史保留。请先切换至“本机服务”登录，再切回执行。";
 }
 
 // 切换保存位置：busy 时拒绝；表单非空先确认会清空；
