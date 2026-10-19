@@ -30,7 +30,7 @@ jobs:
           node-version: ${{ matrix.node }}
           package-manager-cache: false
       - name: Test accounts, passwords, versions, public copies and backups
-        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs work/content-studio/test/hosted.test.cjs work/content-studio/test/publisher.test.cjs
+        run: node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs work/content-studio/test/hosted.test.cjs work/content-studio/test/publisher.test.cjs work/content-studio/test/trash.test.cjs
 
   proxy-config:
     runs-on: ubuntu-latest

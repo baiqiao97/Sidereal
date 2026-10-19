@@ -18,12 +18,13 @@ const serverApi = (function () {
         return "/api/drafts/" + encodeURIComponent(id);
     }
 
-    // 私有请求：/api/drafts 需要 X-Studio-User，401/403 派发登录提醒；
+    // 私有请求：/api/drafts 与 /api/trash 需要 X-Studio-User，401/403 派发登录提醒；
     // 修改密码需要当前会话身份，也按私有请求处理（登录/注册保持公共）；
     // 公共资料导入（保存到我的草稿）会创建私有草稿，也按私有请求处理；
     // 备份恢复会创建新的私有草稿（精确匹配该地址），同样带身份并遵守迟到账号守卫
     function isPrivateRequest(url) {
         return url.indexOf("/api/drafts") === 0 ||
+            /^\/api\/trash(\/|$)/.test(url) ||
             url === "/api/auth/password" ||
             // 生成恢复码需要当前会话身份；reset-password 保持公开，
             // 否则忘记密码时迟到的会话 401 会触发 auth-required 打断恢复流程
@@ -170,12 +171,37 @@ const serverApi = (function () {
             return normalizeDraft(await request(draftUrl(record.id), { method: "PUT", body: form }));
         },
 
-        // expectedVersion 传确认删除时看到的版本号，服务端防并发误删；成功 204 不解析
+        // expectedVersion 传确认删除时看到的版本号，服务端防并发误操作；删除改为移入回收站，成功 204 不解析
         remove: function (id, expectedVersion) {
             return request(draftUrl(id), {
                 method: "DELETE",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ expectedVersion: expectedVersion })
+            });
+        },
+
+        // ---- 回收站适配：复用 request/私有请求守卫；expectedTrashToken 来自列表项，防止旧窗口误操作 ----
+
+        // 回收站列表：只含本人回收记录的元数据（含 trashToken），最近删除在前
+        listTrash: function () {
+            return request("/api/trash", { method: "GET" });
+        },
+
+        // 恢复回收站记录：成功 200 返回完整草稿 DTO（publication 为 null，历史与版本号不变）
+        restoreTrash: function (id, expectedTrashToken) {
+            return request("/api/trash/" + encodeURIComponent(id) + "/restore", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ expectedTrashToken: expectedTrashToken })
+            }).then(normalizeDraft);
+        },
+
+        // 彻底删除回收站记录：成功 204 不解析
+        purgeTrash: function (id, expectedTrashToken) {
+            return request("/api/trash/" + encodeURIComponent(id), {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ expectedTrashToken: expectedTrashToken })
             });
         },
 

@@ -48,6 +48,12 @@ const backupSection = document.getElementById("backupSection");
 const backupInput = document.getElementById("backupInput");
 const restoreBackupButton = document.getElementById("restoreBackupButton");
 
+// 资料回收站（index 内；仅本机服务模式且已登录时显示）
+const trashSection = document.getElementById("trashSection");
+const trashRefresh = document.getElementById("trashRefresh");
+const trashStatus = document.getElementById("trashStatus");
+const trashList = document.getElementById("trashList");
+
 // ---- 固定文案 ----
 // 下拉框选项值到中文名称的对照表，展示时用这份数据翻译
 const CATEGORY_TEXT = {
@@ -168,7 +174,8 @@ function getDraft(db, id) {
     });
 }
 
-/** 按 id 删除；第 3 个版本号仅服务器模式用于防并发误删，本地实现忽略 */
+/** 按 id 删除；浏览器模式直接删本地记录，服务器模式改为移入回收站，
+ *  第 3 个版本号仅服务器模式用于防并发误删，本地实现忽略 */
 function deleteDraftById(db, id, expectedVersion) {
     if (isServerDb(db)) return serverApi.remove(id, expectedVersion);
     return new Promise(function (resolve, reject) {
@@ -207,6 +214,10 @@ function setStartupDisabled(disabled) {
     restoreBackupButton.disabled = merged;
     // 备份文件的选择随之禁用：未登录/存储失效/操作锁定期间不允许挑备份
     backupInput.disabled = merged || storageMode !== "server";
+    // 回收站刷新同属启动控制：未登录/存储失效/操作锁定期间不允许刷
+    trashRefresh.disabled = merged;
+    // 已渲染的回收站卡片按钮一并控制：认证期间新渲染的卡片不能永久保持禁用
+    disableTrashButtons(merged);
 }
 
 /** 读库/列表失败的统一停用：不清空、不假装没有数据 */
@@ -623,7 +634,8 @@ function buildDraftCard(draft) {
 
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
-    deleteButton.textContent = "删除";
+    // 服务器模式改为移入回收站（可恢复）；浏览器存储仍直接删除
+    deleteButton.textContent = storageMode === "server" ? "移入回收站" : "删除";
     deleteButton.addEventListener("click", function () { removeDraft(draft.id); });
 
     actions.appendChild(editButton);
@@ -769,6 +781,186 @@ async function unpublishDraft(draft) {
         newDraftButton.disabled = writesDisabled();
     }
 }
+
+// ============================================================
+// 资料回收站（仅服务器模式且已登录）：
+// - 列出已移入回收站的资料（含 trashToken），卡片可恢复或永久删除；
+// - 恢复不打开/不改当前编辑器；永久删除需确认且不可恢复；
+// - 每次渲染同时记下账号纪元和递增读序，晚到的旧响应不重绘；
+// - 失败保留现有列表，只显示可读提示；401/403 由账号控制器接管。
+// - 回收站读取失败不影响保存：绝不因此写 storageFailed。
+// ============================================================
+
+// 递增的读序号：每次发起回收站读取 ++；晚到的旧响应发现序号变了就丢弃
+let trashReadSeq = 0;
+
+function setTrashStatus(text, isError) {
+    trashStatus.textContent = text;
+    trashStatus.classList.toggle("status-error", Boolean(isError));
+}
+
+/** 登出/需要重新登录时隐藏并清空回收站；读序 +1 让晚到的列表响应作废 */
+function hideTrash() {
+    trashReadSeq += 1;
+    trashSection.hidden = true;
+    trashList.textContent = "";
+    trashStatus.textContent = "";
+    trashStatus.classList.remove("status-error");
+    trashRefresh.disabled = true;
+}
+
+/** 操作期间禁用已渲染的回收站按钮；恢复时尊重 writesDisabled */
+function disableTrashButtons(disabled) {
+    const merged = disabled || writesDisabled();
+    trashList.querySelectorAll("button").forEach(function (button) {
+        button.disabled = merged;
+    });
+}
+
+/** 读取并渲染回收站；仅登录后的服务器模式可见，其余模式一律不请求 */
+async function renderTrash() {
+    if (storageMode !== "server" || !accounts || !accounts.canWrite()) return;
+    // 同时固定纪元与读序：登出/换号或更新的请求都能让旧响应作废
+    const readEpoch = accountEpoch;
+    const readSeq = ++trashReadSeq;
+    // 先显示区域再发请求：首次 500 时错误提示和刷新按钮也可见；失败保留现有列表
+    trashSection.hidden = false;
+    let items;
+    try {
+        items = await serverApi.listTrash();
+    } catch (error) {
+        if (readEpoch !== accountEpoch || readSeq !== trashReadSeq) return;
+        // 登录态由账号控制器处理；其余错误保留现有列表，只显示可读提示
+        if (error && (error.status === 401 || error.status === 403)) return;
+        setTrashStatus("读取回收站失败：" + (error && error.message ? error.message : "本机服务出错") + "。现有列表未改动，请稍后点“刷新回收站”重试。", true);
+        return;
+    }
+    if (readEpoch !== accountEpoch || readSeq !== trashReadSeq) return;
+
+    trashStatus.textContent = "";
+    trashStatus.classList.remove("status-error");
+    trashList.textContent = "";
+
+    if (!items || items.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "empty-hint";
+        empty.textContent = "回收站是空的。移入回收站的资料会出现在这里。";
+        trashList.appendChild(empty);
+        return;
+    }
+
+    items.forEach(function (item) {
+        trashList.appendChild(buildTrashCard(item));
+    });
+    // 若渲染发生在某个写操作期间，新卡片按钮同样先禁用
+    disableTrashButtons(operationBusy);
+}
+
+/** 把一条回收站记录渲染成卡片；全部 textContent，token 闭包捕获后直接用于写操作 */
+function buildTrashCard(item) {
+    const card = document.createElement("article");
+    card.className = "draft-card";
+
+    const heading = document.createElement("h3");
+    heading.textContent = item.title;
+    card.appendChild(heading);
+
+    const deletionLine = document.createElement("p");
+    deletionLine.textContent = "删除时间：" + formatTime(new Date(item.deletedAt).getTime());
+    card.appendChild(deletionLine);
+
+    const categoryLine = document.createElement("p");
+    categoryLine.textContent = "类型：" + (CATEGORY_TEXT[item.category] || item.category);
+    card.appendChild(categoryLine);
+
+    const actions = document.createElement("p");
+    actions.className = "draft-actions";
+
+    const restoreButton = document.createElement("button");
+    restoreButton.type = "button";
+    restoreButton.textContent = "恢复资料";
+    restoreButton.addEventListener("click", function () { restoreTrashItem(item.title, item.id, item.trashToken); });
+
+    const purgeButton = document.createElement("button");
+    purgeButton.type = "button";
+    purgeButton.textContent = "永久删除";
+    purgeButton.addEventListener("click", function () { purgeTrashItem(item.title, item.id, item.trashToken); });
+
+    actions.appendChild(restoreButton);
+    actions.appendChild(purgeButton);
+    card.appendChild(actions);
+    return card;
+}
+
+/** 从回收站恢复：不动编辑器/表单/核对区，只刷新草稿列表与回收站列表 */
+async function restoreTrashItem(title, id, trashToken) {
+    if (storageMode !== "server" || writesDisabled() || operationBusy) return;
+    const restoreEpoch = accountEpoch;
+    operationBusy = true;
+    setStartupDisabled(true);
+    disableTrashButtons(true);
+    try {
+        await serverApi.restoreTrash(id, trashToken);
+        if (restoreEpoch !== accountEpoch) return;
+        await renderDrafts();
+        if (restoreEpoch !== accountEpoch) return;
+        await renderTrash();
+        if (restoreEpoch !== accountEpoch) return;
+        setStorageStatus("已恢复“" + title + "”到资料列表（未发布）。编辑器与表单未改动。");
+    } catch (error) {
+        if (restoreEpoch !== accountEpoch) return;
+        // 登录态由账号控制器接管
+        if (error && (error.status === 401 || error.status === 403)) return;
+        if (error && error.status === 409) {
+            // token 已失效：提示用户手动刷新，保留现有列表，不自动重绘（自动刷新会清掉这条提示）
+            setTrashStatus("这条资料已在其他窗口被操作过，本次未恢复。请点“刷新回收站”查看最新状态。", true);
+            return;
+        }
+        setTrashStatus("恢复失败：" + (error && error.message ? error.message : "本机服务出错") + "。回收站列表未改动，请重试。", true);
+    } finally {
+        operationBusy = false;
+        setStartupDisabled(false);
+        disableTrashButtons(false);
+    }
+}
+
+/** 永久删除：明确确认不可恢复；取消则零请求零改动；token 用卡片上捕获的 */
+async function purgeTrashItem(title, id, trashToken) {
+    if (storageMode !== "server" || writesDisabled() || operationBusy) return;
+    const purgeEpoch = accountEpoch;
+    operationBusy = true;
+    setStartupDisabled(true);
+    disableTrashButtons(true);
+    try {
+        const confirmed = window.confirm(
+            "确定要永久删除“" + title + "”吗？回收站里这条资料的全部已保存版本和附件都会被彻底删除，无法恢复。" +
+            "点“取消”则不做任何改动。"
+        );
+        if (!confirmed) return;
+        await serverApi.purgeTrash(id, trashToken);
+        if (purgeEpoch !== accountEpoch) return;
+        await renderTrash();
+        if (purgeEpoch !== accountEpoch) return;
+        setTrashStatus("已永久删除“" + title + "”，全部版本和附件不可恢复。");
+    } catch (error) {
+        if (purgeEpoch !== accountEpoch) return;
+        if (error && (error.status === 401 || error.status === 403)) return;
+        if (error && error.status === 409) {
+            setTrashStatus("这条资料已在其他窗口被操作过，本次未删除。请点“刷新回收站”查看最新状态。", true);
+            return;
+        }
+        setTrashStatus("永久删除失败：" + (error && error.message ? error.message : "本机服务出错") + "。资料仍在回收站，请重试。", true);
+    } finally {
+        operationBusy = false;
+        setStartupDisabled(false);
+        disableTrashButtons(false);
+    }
+}
+
+trashRefresh.addEventListener("click", function () {
+    if (storageMode !== "server" || operationBusy) return;
+    renderTrash();
+});
 
 // ============================================================
 // 资料备份与恢复（仅服务器模式）：
@@ -1041,15 +1233,20 @@ async function startEdit(id) {
 
 // ============================================================
 // 删除（阶段三）：window.confirm 确认；写库成功才更新列表。
-// 删的是保存在浏览器里的本地副本及其版本，不影响电脑上的原文件。
+// 浏览器模式直接删除本地记录及其版本；
+// 服务器模式改为移入回收站：服务端保留全部版本和附件、
+// 撤回已发布的公共版本，恢复后仍是未发布状态。
+// 删的是保存在浏览器里的本地副本，不影响电脑上的原文件。
 // ============================================================
 async function removeDraft(id) {
     if (writesDisabled() || operationBusy) return;
+    // 固定开始时的账号纪元；期间登出/换号由 epoch 守卫丢弃结果，不动界面
+    const removeEpoch = accountEpoch;
     operationBusy = true;
-    saveDraftButton.disabled = true;
-    newDraftButton.disabled = true;
+    setStartupDisabled(true);
     try {
         const readResult = await getDraftSafe(id);
+        if (removeEpoch !== accountEpoch) return;
         if (readResult === "read-error") {
             showError("读取资料失败，无法删除。请重试。");
             return;
@@ -1057,14 +1254,17 @@ async function removeDraft(id) {
         if (!readResult) {
             showError("这条资料已不存在。");
             await renderDrafts();
+            if (removeEpoch !== accountEpoch) return;
+            // 服务器模式同步刷新回收站，避免回收站与实际状态脱节
+            if (storageMode === "server") await renderTrash();
             return;
         }
         const target = readResult;
-        // server 模式且已发布：确认文案必须明确“删除会同时撤回公共资料”
+        // server 模式：删除=移入回收站；已发布的会同时撤回公共版本，恢复后仍为未发布
         const confirmed = window.confirm(storageMode === "server"
-            ? "确定要删除“" + target.title + "”吗？将删除已保存的这条资料及其全部版本" +
-              (target.publication ? "，该资料已发布到公共仓库，删除会同时撤回公共版本，公共仓库里不再可见" : "") +
-              "。电脑上的原文件不受影响。"
+            ? "确定把“" + target.title + "”移入回收站吗？回收站会保留这条资料的全部已保存版本和附件，不会立刻删除" +
+              (target.publication ? "；该资料已发布到公共仓库，移入时将同时撤回公共版本，公共仓库里不再可见" : "") +
+              "。日后从回收站恢复时它仍是未发布状态。电脑上的原文件不受影响。"
             : "确定要删除“" + target.title + "”吗？将删除本地保存的这条资料及其全部版本。电脑上的原文件不受影响。");
         if (!confirmed) {
             // 取消：什么都不改
@@ -1072,12 +1272,17 @@ async function removeDraft(id) {
         }
         try {
             const db = await dbPromise;
+            // 换号/登出后再发删除：纪元已变则不做任何写操作
+            if (removeEpoch !== accountEpoch) return;
             // 第三个参数是确认时看到的版本号，服务器用它防并发误删（本地忽略）
             await deleteDraftById(db, id, target.revision);
         } catch (error) {
+            // 期间换号/登出：由账号控制器接管界面，不覆盖提示
+            if (removeEpoch !== accountEpoch) return;
             showError("删除失败：" + (error && error.message ? error.message : "数据库操作出错") + "。资料仍在。");
             return;
         }
+        if (removeEpoch !== accountEpoch) return;
 
         // 正在编辑的正好是它：回到新建状态，避免把已删资料再存一份
         if (editingId === id) {
@@ -1093,13 +1298,15 @@ async function removeDraft(id) {
             closeHistory();
         }
         setStorageStatus(storageMode === "server"
-            ? "已删除“" + target.title + "”。"
+            ? "已移入回收站“" + target.title + "”。可稍后在资料回收站恢复或永久删除。"
             : "已删除本地保存的“" + target.title + "”。");
         await renderDrafts();
+        if (removeEpoch !== accountEpoch) return;
+        // 服务器模式同步刷新回收站列表
+        if (storageMode === "server") await renderTrash();
     } finally {
         operationBusy = false;
-        saveDraftButton.disabled = writesDisabled();
-        newDraftButton.disabled = writesDisabled();
+        setStartupDisabled(false);
     }
 }
 
@@ -1340,10 +1547,15 @@ function connectStorage() {
                     clearEditor: function () { clearEditor(); },
                     onAuthenticated: async function (user) {
                         accountEpoch += 1;
+                        const loginEpoch = accountEpoch;
                         currentAccount = user;
                         storageFailed = false;
                         dbPromise = Promise.resolve({ kind: "server" });
                         await renderDrafts();
+                        if (loginEpoch !== accountEpoch) return;
+                        // 登录成功后先列资料，再列回收站；回收站失败不影响上面
+                        await renderTrash();
+                        if (loginEpoch !== accountEpoch) return;
                         if (!storageFailed) {
                             setStorageStatus("已登录：" + user.username);
                         }
@@ -1356,6 +1568,8 @@ function connectStorage() {
                         librarySection.hidden = true;
                         draftList.textContent = "";
                         closeHistory();
+                        // 回收站跟着隐藏清空；读序 +1 使晚到的列表响应作废
+                        hideTrash();
                         setStartupDisabled(true);
                         setStorageStatus("请先登录；未保存的表单仍保留。");
                     }
