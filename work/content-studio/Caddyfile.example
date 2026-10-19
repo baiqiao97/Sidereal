@@ -1,0 +1,20 @@
+# Caddyfile 示例（非部署配置）
+#
+# studio.example.test 为占位域名，请与 STUDIO_PUBLIC_ORIGIN 一并替换为实际域名。
+# Caddy 会自动为该站点启用 HTTPS（默认自动申请/续期证书）。
+#
+# 仅作同机 TLS 反向代理示例：
+# - 不要使用 file_server 提供 source/data 目录
+# - 本文件仅为示例，不构成部署方案
+
+studio.example.test {
+	# 与服务端备份上限保持一致（512MiB）
+	request_body {
+		max_size 512MiB
+	}
+
+	reverse_proxy 127.0.0.1:4173 {
+		# 保留原始 Host（含非默认端口），不重写为 localhost
+		header_up Host {hostport}
+	}
+}

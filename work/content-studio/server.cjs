@@ -13,10 +13,31 @@ const maxBodyBytes = 52 * 1024 * 1024;
 const maxFileBytes = 50 * 1024 * 1024;
 // 密码/恢复码端点 JSON 正文上限 8KiB；草稿正文仍为 52MiB
 const authBodyMaxBytes = 8 * 1024;
-const localHost = `127.0.0.1:${port}`;
-const localOrigin = `http://127.0.0.1:${port}`;
+// 可选联网测试配置：STUDIO_PUBLIC_ORIGIN / 谨慎使用，仅供临时测试，部署需额外的反向代理与 TLS 配置
+// 未配置时保持本机 HTTP 原型行为；配置时必须是规范的 HTTPS URL（无路径/查询/凭据），反代须保证 Host 原样转发
+const publicOriginEnv = process.env['STUDIO_PUBLIC_ORIGIN'];
+let expectedOrigin = `http://127.0.0.1:${port}`;
+let expectedHost = `127.0.0.1:${port}`;
+let expectedCookieSecure = false;
+if (publicOriginEnv !== undefined) {
+    // 解析失败或非规范 HTTPS URL 一律拒绝；出错即退出，不提原始环境值
+    let parsed;
+    try {
+        parsed = new URL(publicOriginEnv);
+    } catch {
+        parsed = null;
+    }
+    if (!parsed || parsed.protocol !== 'https:' || publicOriginEnv !== parsed.origin
+        || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+        console.error('配置错误：STUDIO_PUBLIC_ORIGIN 应为 https://域名[:端口]，不含末尾斜线、路径或凭据');
+        process.exit(1);
+    }
+    expectedOrigin = parsed.origin;
+    expectedHost = parsed.host; // 含非默认端口
+    expectedCookieSecure = true;
+}
 
-// 使用固定的本机来源，保持浏览器保存位置和后端接口的地址一致。
+// 使用固定来源，保持浏览器保存位置和后端接口的地址一致。
 // 静态白名单维持原状；server-api.js 供前端接入，文件未创建时按普通缺失返回 404。
 const files = new Map([
     ['/', ['index.html', 'text/html; charset=utf-8']],
@@ -34,6 +55,11 @@ let store;
 try {
     fs.mkdirSync(dataDir, { recursive: true });
     store = createStore(path.join(dataDir, 'drafts.db'));
+    // 开放联网测试时，空库必须先在纯本机模式手动创建首个账户，匿名无法认领新实例
+    if (publicOriginEnv !== undefined && store.auth.status().needsSetup) {
+        store.close();
+        throw new Error('联网测试前请先在本机模式创建首个账户');
+    }
 } catch (error) {
     console.error('Unable to open database: ' + error.message);
     process.exit(1);
@@ -54,9 +80,10 @@ function sendJson(response, status, data, extra) {
 }
 
 function originAllowed(request) {
-    // 带 Origin 时只接受本机来源；无 Origin 时命令行可用，但浏览器 cross-site 请求拒绝
+    // 带 Origin 时只接受配置的来源（本机模式即 127.0.0.1:port，联网测试即公网来源）
+    // 忽略 X-Forwarded-Host / X-Forwarded-Proto 等转发头，不做信任
     const origin = request.headers.origin;
-    if (origin) return origin === localOrigin;
+    if (origin) return origin === expectedOrigin;
     return request.headers['sec-fetch-site'] !== 'cross-site';
 }
 
@@ -87,7 +114,7 @@ function readBody(request, limit) {
 // 用内置 Request(formData) 解析 multipart，全过程无网络请求
 async function parseMultipart(body, contentType) {
     if (!/^multipart\/form-data\b/i.test(String(contentType))) throw fail(400, '必须以 multipart/form-data 提交');
-    const message = new Request(localOrigin + '/', { method: 'PUT', headers: { 'content-type': contentType }, body });
+    const message = new Request(expectedOrigin + '/', { method: 'PUT', headers: { 'content-type': contentType }, body });
     let form;
     try {
         form = await message.formData();
@@ -145,11 +172,14 @@ const SESSION_COOKIE_PATTERN = /(?:^|;\s*)sidereal_session=([0-9a-f]{64})(?:;|$)
 const cookieBaseAttrs = 'HttpOnly; SameSite=Strict; Path=/';
 
 function setSessionCookie(token) {
-    return `${SESSION_COOKIE}=${token}; ${cookieBaseAttrs}; Max-Age=604800`;
+    // 公网来源已配置时补加 Secure；HTTPOnly/SameSite/Path 不变，不设 Domain
+    const secure = expectedCookieSecure ? '; Secure' : '';
+    return `${SESSION_COOKIE}=${token}; ${cookieBaseAttrs}${secure}; Max-Age=604800`;
 }
 
 function clearSessionCookie() {
-    return `${SESSION_COOKIE}=; ${cookieBaseAttrs}; Max-Age=0`;
+    const secure = expectedCookieSecure ? '; Secure' : '';
+    return `${SESSION_COOKIE}=; ${cookieBaseAttrs}${secure}; Max-Age=0`;
 }
 
 // 只接受 64 位十六进制 token 的 cookie；畸形 cookie 静默忽略，绝不 throw
@@ -408,9 +438,9 @@ async function handleApi(request, response, pathname) {
 }
 
 async function handle(request, response) {
-    // Host 必须是本机端口，避免本地服务被其他域名以 Host 方式利用
-    if (request.headers.host !== localHost) throw fail(403, 'Access denied');
-    const pathname = new URL(request.url, localOrigin).pathname;
+    // Host 必须完全匹配预期值（本机端口或公网主机+可选非默认端口）；转发头不影响该检查
+    if (request.headers.host !== expectedHost) throw fail(403, 'Access denied');
+    const pathname = new URL(request.url, expectedOrigin).pathname;
     if (pathname.startsWith('/api/')) return handleApi(request, response, pathname);
     if (request.method !== 'GET' && request.method !== 'HEAD') {
         response.writeHead(405, { Allow: 'GET, HEAD' }).end();
@@ -430,6 +460,10 @@ async function handle(request, response) {
 }
 
 const server = http.createServer((request, response) => {
+    // 通用安全响应头：在业务处理前就位；本机原型的反代负责 TLS 终结，故 HSTS 不在此设置
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('Referrer-Policy', 'no-referrer');
     handle(request, response).catch(error => {
         const status = error && Number.isInteger(error.status) ? error.status : 500;
         // 500 统一隐藏内部细节：不暴露本机路径或 SQL 信息
@@ -461,4 +495,4 @@ server.on('error', error => {
 });
 process.on('SIGINT', () => { shutdown(); process.exit(0); });
 process.on('SIGTERM', () => { shutdown(); process.exit(0); });
-server.listen(port, '127.0.0.1', () => console.log(`Content Studio: http://127.0.0.1:${port}`));
+server.listen(port, '127.0.0.1', () => console.log(`Content Studio: ${expectedOrigin} (backend: 127.0.0.1:${port})`));
