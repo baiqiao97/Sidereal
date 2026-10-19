@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>公共资料仓库</title>
+</head>
+
+<body>
+    <h1>公共资料仓库</h1>
+    <!-- 显眼说明：本页是本机只读预览，不暴露到互联网 -->
+    <p class="public-intro">本机预览，尚未开放互联网；这里只展示手动发布的版本。</p>
+    <p id="publicAccountStatus" role="status" class="status-line"></p>
+    <p class="status-line"><a id="publicLoginLink" class="public-link" href="/">前往工作台登录</a> <a id="publicDraftsLink" class="public-link" href="/">查看我的草稿</a></p>
+    <p id="publicImportStatus" role="status" aria-live="polite" class="status-line"></p>
+
+    <p>
+        <a class="public-link" href="/">返回工作台</a>
+    </p>
+
+    <!-- 搜索/类型筛选只在已加载的列表里过滤，不追加请求 -->
+    <div class="library-tools">
+        <label for="publicSearch">搜索标题、简介或文件名</label>
+        <input type="search" id="publicSearch" placeholder="例如：民法">
+        <label for="publicCategory">按类型筛选</label>
+        <select id="publicCategory">
+            <option value="">全部类型</option>
+            <option value="law">法律法规</option>
+            <option value="notes">笔记</option>
+            <option value="questions">题库</option>
+        </select>
+        <button type="button" id="publicRefresh">刷新公共列表</button>
+    </div>
+
+    <p id="publicCount" class="status-line"></p>
+    <p id="publicStatus" class="status-line" role="status" aria-live="polite"></p>
+    <div id="publicList"></div>
+
+    <script src="server-api.js"></script>
+    <script src="public.js"></script>
+
+</body>
+
+</html>

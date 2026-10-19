@@ -27,6 +27,12 @@ git push -u origin feat/law-categories
 
 之后在 GitHub 上发起 Pull Request，让另一位开发者检查再合并。不同人应使用**各自的 GitHub 账号**，不要共享访问令牌或密码。直接往 `main` 推送不是推荐的合作方式。
 
+## Content Studio 每阶段交付
+
+每个阶段完成后，先验证功能并检查差异，只提交该阶段涉及的源码和测试，推送功能分支后创建面向 `main` 的 Pull Request。审查 PR 的代码、自动检查和未解决意见，修正问题并重新验证后再合并；不能把同一账号的自查说成另一位开发者的批准，也不能绕过仓库的保护规则。
+
+接口回归检查使用 Node.js 22.21.0，无需安装依赖：`node --test work/content-studio/test/api.test.cjs`。GitHub 的 Content Studio 工作流会在相关 PR 和合并到 `main` 后执行同一检查。浏览器交互仍需按阶段验证。不得提交 `work/content-studio/data/`、`.cache/`、真实资料、附件、密码或密钥；合并源码不等于部署网站。
+
 ## 安全与资料
 
 - 不提交 `.env`、API Key、密码、真实加密密钥、个人数据与私人笔记。
