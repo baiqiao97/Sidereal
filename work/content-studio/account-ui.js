@@ -13,7 +13,11 @@
     // ---- DOM节点 ----
     const ids = ['authSection', 'authStatus', 'authForm', 'authUsername', 'authPassword',
       'legacyClaimRow', 'legacyClaimText', 'legacyClaim', 'authSubmit', 'authToggle', 'authError', 'logoutButton',
-      'passwordForm', 'currentPassword', 'newPassword', 'confirmPassword', 'changePasswordButton'];
+      'passwordForm', 'currentPassword', 'newPassword', 'confirmPassword', 'changePasswordButton',
+      'recoveryCodeForm', 'recoveryCurrentPassword', 'generateRecoveryCodeButton',
+      'recoveryCodeOutput', 'generatedRecoveryCode', 'hideRecoveryCodeButton',
+      'resetPasswordPanel', 'resetPasswordForm', 'resetUsername', 'resetCode',
+      'resetNewPassword', 'resetConfirmPassword', 'resetPasswordButton'];
     const nodes = {};
     for (let i = 0; i < ids.length; i++) {
       const node = document.getElementById(ids[i]);
@@ -61,6 +65,22 @@
       nodes.confirmPassword.value = '';
     }
 
+    // 清空恢复码相关输入与已生成的恢复码（恢复码仅存在于DOM，任何账户事件都立即清除）
+    function clearRecoveryFields() {
+      nodes.recoveryCurrentPassword.value = '';
+      nodes.recoveryCodeOutput.hidden = true;
+      nodes.generatedRecoveryCode.value = '';
+    }
+
+    // 清空恢复码重置表单输入并收起面板
+    function clearResetFields() {
+      nodes.resetUsername.value = '';
+      nodes.resetCode.value = '';
+      nodes.resetNewPassword.value = '';
+      nodes.resetConfirmPassword.value = '';
+      nodes.resetPasswordPanel.open = false;
+    }
+
     // ---- 渲染 ----
     function render() {
       const busyNow = busy;
@@ -79,6 +99,20 @@
       nodes.newPassword.disabled = busyNow || !user;
       nodes.confirmPassword.disabled = busyNow || !user;
       nodes.changePasswordButton.disabled = busyNow || !user;
+      // 恢复码生成：仅登录后显示；忙碌时禁用输入
+      nodes.recoveryCodeForm.hidden = !user;
+      nodes.recoveryCurrentPassword.disabled = busyNow || !user;
+      nodes.generateRecoveryCodeButton.disabled = busyNow || !user;
+      nodes.hideRecoveryCodeButton.disabled = busyNow;
+      // 恢复码重置：仅未登录（login模式，非setup）时显示；忙碌时禁用
+      const resetVisible = !user && mode === 'login';
+      nodes.resetPasswordPanel.hidden = !resetVisible;
+      nodes.resetUsername.disabled = busyNow || !resetVisible;
+      nodes.resetCode.disabled = busyNow || !resetVisible;
+      nodes.resetNewPassword.disabled = busyNow || !resetVisible;
+      nodes.resetConfirmPassword.disabled = busyNow || !resetVisible;
+      nodes.resetPasswordButton.disabled = busyNow || !resetVisible;
+      if (!resetVisible) nodes.resetPasswordPanel.open = false;
       if (user) {
         nodes.authStatus.textContent = '已登录：' + user.username;
         nodes.legacyClaimRow.hidden = true;
@@ -171,6 +205,8 @@
         editorUser = nextUser;
         nodes.authPassword.value = '';
         clearPasswordFields(); // 账户变更：不把旧密码字段带给新账户
+        clearRecoveryFields();
+        clearResetFields();
         render();
         await hooks.onAuthenticated(nextUser);
       } catch (err) {
@@ -206,6 +242,8 @@
         serverApi.setUser(null);
         mode = 'login';
         clearPasswordFields(); // 退出：防止旧密码输入残留
+        clearRecoveryFields();
+        clearResetFields();
         hooks.clearEditor();
         hooks.onRequired();
       } catch (err) {
@@ -224,6 +262,8 @@
       serverApi.setUser(null);
       mode = 'login';
       clearPasswordFields(); // 会话失效：清空修改密码输入，避免旧密码残留
+      clearRecoveryFields();
+      clearResetFields();
       showError('登录已失效或账号已切换，请重新登录；未保存内容仍保留。');
       render();
       hooks.onRequired();
@@ -267,9 +307,85 @@
       }
     }
 
+    // ---- 生成恢复码：先离线保存，任何账户事件后立即清空 ----
+    async function handleRecoverySubmit(event) {
+      event.preventDefault();
+      if (isBusy() || !user) return;
+      if (!nodes.recoveryCodeForm.checkValidity()) return;
+
+      // 生成新码会使旧码失效：先清空旧输出，再确认
+      nodes.recoveryCodeOutput.hidden = true;
+      nodes.generatedRecoveryCode.value = '';
+      if (!window.confirm('生成新恢复码会使旧恢复码立即失效。恢复码只在本次显示一次，请准备好离线保存的位置。确定生成吗？')) return;
+
+      const requestUser = user; // 校验当前密码等待期间可能切号
+      setBusy(true);
+      clearError();
+      render();
+      try {
+        const result = await serverApi.authGenerateRecoveryCode(nodes.recoveryCurrentPassword.value);
+        const code = result && result.code;
+        if (!code) throw new Error('服务器未返回恢复码。');
+        if (!user || user.id !== requestUser.id) return; // 等待期间账户已切换，丢弃
+        nodes.generatedRecoveryCode.value = code;
+        nodes.recoveryCodeOutput.hidden = false;
+        nodes.recoveryCurrentPassword.value = '';
+      } catch (err) {
+        if (!(err && (err.status === 401 || err.status === 403))) {
+          showError('生成恢复码失败：' + describe(err, '请确认当前密码后重试。'));
+        }
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
+    function handleHideRecovery() {
+      nodes.recoveryCodeOutput.hidden = true;
+      nodes.generatedRecoveryCode.value = '';
+    }
+
+    // ---- 用恢复码重置密码：仅在未登录时可用；不自动登录，不做authMe回访 ----
+    async function handleResetSubmit(event) {
+      event.preventDefault();
+      if (isBusy() || user || mode !== 'login') return;
+      if (!nodes.resetPasswordForm.checkValidity()) return;
+
+      const username = nodes.resetUsername.value.trim().toLowerCase();
+      const code = nodes.resetCode.value;
+      const newPassword = nodes.resetNewPassword.value;
+      if (newPassword !== nodes.resetConfirmPassword.value) {
+        showError('两次输入的新密码不一致，请重新输入。');
+        return;
+      }
+
+      if (!window.confirm('重置密码会退出该账户的所有设备（包括当前浏览器），并使旧恢复码失效；未保存资料仍保留。确定重置吗？')) return;
+
+      setBusy(true);
+      clearError();
+      render();
+      try {
+        const result = await serverApi.authResetPassword(username, code, newPassword);
+        if (!result || result.changed !== true) throw new Error('服务器未确认重置结果。');
+        // 重用authRequired逻辑清身份区/私有区，但保留资料编辑器，随后预填用户名
+        handleAuthRequired();
+        nodes.authUsername.value = username;
+        nodes.authPassword.value = '';
+        showError('密码已重置，请重新登录；未保存资料仍保留。登录后请生成新的恢复码。');
+      } catch (err) {
+        showError('重置密码失败：' + describe(err, '请检查用户名与恢复码后重试。'));
+      } finally {
+        setBusy(false);
+        render();
+      }
+    }
+
     // ---- 事件绑定与导出 ----
     nodes.authForm.addEventListener('submit', handleSubmit);
     nodes.passwordForm.addEventListener('submit', handlePasswordSubmit);
+    nodes.recoveryCodeForm.addEventListener('submit', handleRecoverySubmit);
+    nodes.hideRecoveryCodeButton.addEventListener('click', handleHideRecovery);
+    nodes.resetPasswordForm.addEventListener('submit', handleResetSubmit);
     nodes.authToggle.addEventListener('click', handleToggle);
     nodes.logoutButton.addEventListener('click', handleLogout);
     window.addEventListener('studio-auth-required', handleAuthRequired);

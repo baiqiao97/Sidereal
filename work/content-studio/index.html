@@ -78,6 +78,58 @@
                 <button type="submit" id="changePasswordButton">修改密码</button>
             </p>
         </form>
+        <!-- 恢复码生成：与登录/修改密码表单平级（不嵌套表单）；仅登录后由JS显示 -->
+        <form id="recoveryCodeForm" hidden>
+            <h3>恢复码</h3>
+            <p class="recovery-note">恢复码用于在忘记密码时离线重置：任何持有恢复码的人都可以重置该账户密码。
+                恢复码只在本次生成时显示一次，请手动抄写到离线处保存。生成新恢复码会使旧码失效；
+                正常修改密码或使用恢复码重置后，旧恢复码也会失效。</p>
+            <p>
+                <label for="recoveryCurrentPassword">当前密码（12~128字符）</label>
+                <input type="password" id="recoveryCurrentPassword" required minlength="12" maxlength="128"
+                    autocomplete="current-password">
+            </p>
+            <p>
+                <button type="submit" id="generateRecoveryCodeButton">生成恢复码</button>
+            </p>
+            <p id="recoveryCodeOutput" hidden>
+                <label for="generatedRecoveryCode">一次性恢复码（请立即离线保存）</label>
+                <input type="text" id="generatedRecoveryCode" readonly autocomplete="off">
+                <button type="button" id="hideRecoveryCodeButton">已离线保存，隐藏恢复码</button>
+            </p>
+        </form>
+        <!-- 忘记密码重置：折叠面板；仅未登录（login模式）由JS显示 -->
+        <details id="resetPasswordPanel" hidden>
+            <summary>忘记密码？用恢复码重置</summary>
+            <form id="resetPasswordForm">
+                <p class="recovery-note">前提是之前已保存过该账户的恢复码。密码和恢复码都丢失时无法在此重置。
+                    重置成功会退出该账户的所有设备及当前浏览器的登录，未保存资料保留；
+                    用新密码登录后，请重新生成并保存新的恢复码。</p>
+                <p>
+                    <label for="resetUsername">用户名（3~32位字母/数字/下划线/短横线）</label>
+                    <input type="text" id="resetUsername" required minlength="3" maxlength="32"
+                        pattern="[A-Za-z0-9_\-]{3,32}" autocomplete="username">
+                </p>
+                <p>
+                    <label for="resetCode">恢复码（64位十六进制）</label>
+                    <input type="password" id="resetCode" required minlength="64" maxlength="64"
+                        pattern="[A-Fa-f0-9]{64}" autocomplete="off">
+                </p>
+                <p>
+                    <label for="resetNewPassword">新密码（12~128字符）</label>
+                    <input type="password" id="resetNewPassword" required minlength="12" maxlength="128"
+                        autocomplete="new-password">
+                </p>
+                <p>
+                    <label for="resetConfirmPassword">确认新密码（12~128字符）</label>
+                    <input type="password" id="resetConfirmPassword" required minlength="12" maxlength="128"
+                        autocomplete="new-password">
+                </p>
+                <p>
+                    <button type="submit" id="resetPasswordButton">重置密码</button>
+                </p>
+            </form>
+        </details>
         <!-- 登录/注册/退出失败提示：必须放 authForm 外，退出失败时表单可能已隐藏 -->
         <p id="authError" class="draft-error" role="alert" aria-live="assertive" hidden></p>
         <p>

@@ -47,6 +47,10 @@ function createAuth(db) {
             userId TEXT REFERENCES users(id),
             expiresAt INTEGER
         );
+        CREATE TABLE IF NOT EXISTS recovery_codes (
+            userId TEXT PRIMARY KEY REFERENCES users(id),
+            codeHash TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS draft_owners (
             draftId TEXT PRIMARY KEY REFERENCES drafts(id) ON DELETE CASCADE,
             userId TEXT REFERENCES users(id)
@@ -66,7 +70,10 @@ function createAuth(db) {
         userCredentialsById: db.prepare('SELECT id, salt, passwordHash FROM users WHERE id = ?'),
         tokenSessionUser: db.prepare('SELECT userId FROM sessions WHERE tokenHash = ? AND expiresAt > ?'),
         casUpdatePassword: db.prepare('UPDATE users SET salt = ?, passwordHash = ? WHERE id = ? AND salt = ? AND passwordHash = ?'),
-        deleteSessionsByUser: db.prepare('DELETE FROM sessions WHERE userId = ?')
+        deleteSessionsByUser: db.prepare('DELETE FROM sessions WHERE userId = ?'),
+        recoveryCodeByUser: db.prepare('SELECT codeHash FROM recovery_codes WHERE userId = ?'),
+        upsertRecoveryCode: db.prepare('INSERT INTO recovery_codes (userId, codeHash) VALUES (?, ?) ON CONFLICT(userId) DO UPDATE SET codeHash = excluded.codeHash'),
+        deleteRecoveryCode: db.prepare('DELETE FROM recovery_codes WHERE userId = ?')
     };
 
     function runTransaction(action) {
@@ -205,6 +212,67 @@ function createAuth(db) {
             if (r.changes !== 1) throw fail(409, '密码已被其他操作修改，请重新登录后再试');
             // 注销用户全部会话（含调用者）
             statements.deleteSessionsByUser.run(user.id);
+            // 换密码作废恢复码，防止泄露的离线恢复码继续可用
+            statements.deleteRecoveryCode.run(user.id);
+        });
+        return { changed: true };
+    }
+
+    // 可选生成离线恢复码：明文只返回一次，库里仅存 SHA256；换码/改码/换密码即作废旧码
+    async function generateRecoveryCode(token, currentPassword) {
+        const user = current(token);
+        if (!user) throw fail(401, '请先登录');
+        validatePassword(currentPassword);
+        const row = statements.userCredentialsById.get(user.id);
+        if (!row) throw fail(401, '请先登录');
+        const currentHash = await hashPassword(currentPassword, row.salt);
+        if (!safeEqualHex(currentHash, row.passwordHash)) throw fail(400, '当前密码不正确');
+        const code = randomBytes(32).toString('hex');
+        runTransaction(() => {
+            // 生成前重验证：会话仍有效且凭据未被并发修改
+            const session = statements.tokenSessionUser.get(sha256(token), Date.now());
+            if (!session || session.userId !== user.id) throw fail(401, '请先登录');
+            const fresh = statements.userCredentialsById.get(user.id);
+            if (!fresh || fresh.salt !== row.salt || fresh.passwordHash !== row.passwordHash) {
+                throw fail(409, '凭据已被其他操作修改，请重新登录后再试');
+            }
+            // 覆盖旧码即立即失效
+            statements.upsertRecoveryCode.run(user.id, sha256(code));
+        });
+        return { code };
+    }
+
+    // 用恢复码重置密码：不区分用户名/恢复码错误与失效，统一同一 400
+    async function resetPassword(username, code, newPassword) {
+        const FAILURE = '用户名或恢复码不正确，或恢复码已失效';
+        let name;
+        try {
+            name = normalizeUsername(username);
+        } catch {
+            throw fail(400, FAILURE);
+        }
+        if (typeof code !== 'string') throw fail(400, FAILURE);
+        const trimmed = code.trim().toLowerCase();
+        if (!/^[0-9a-f]{64}$/.test(trimmed)) throw fail(400, FAILURE);
+        validatePassword(newPassword);
+        const user = statements.userByName.get(name);
+        const stored = user ? statements.recoveryCodeByUser.get(user.id) : null;
+        const codeDigest = sha256(trimmed);
+        // 恒定时间比较：无恢复码时与全零哈希比较，保持相同成本
+        const matches = safeEqualHex(codeDigest, stored ? stored.codeHash : '0'.repeat(64)) && Boolean(user && stored);
+        // 即便用户/恢复码不存在也执行同等成本 scrypt，避免响应时间差暴露账号是否存在
+        const salt = randomBytes(16).toString('hex');
+        const passwordHash = await hashPassword(newPassword, salt);
+        if (!matches) throw fail(400, FAILURE);
+        runTransaction(() => {
+            // 事务内核对恢复码仍相同，且原密码未被并发修改（CAS）
+            const currentCode = statements.recoveryCodeByUser.get(user.id);
+            if (!currentCode || currentCode.codeHash !== stored.codeHash) throw fail(400, FAILURE);
+            const r = statements.casUpdatePassword.run(salt, passwordHash, user.id, user.salt, user.passwordHash);
+            if (r.changes !== 1) throw fail(400, FAILURE);
+            // 恢复码一次性：与改密、注销全部会话同事务完成
+            statements.deleteRecoveryCode.run(user.id);
+            statements.deleteSessionsByUser.run(user.id);
         });
         return { changed: true };
     }
@@ -214,7 +282,7 @@ function createAuth(db) {
         statements.deleteSession.run(sha256(token));
     }
 
-    return { status, setup, register, login, current, logout, changePassword };
+    return { status, setup, register, login, current, logout, changePassword, generateRecoveryCode, resetPassword };
 }
 
 module.exports = { createAuth };
