@@ -33,7 +33,7 @@ git push -u origin feat/law-categories
 
 只有上述流程全部完成，才可将该开发阶段标记为完成。仅写完代码、通过本地测试、推送分支或创建 PR 均不算阶段完成；等待检查、审查修正或合并时，应明确报告阶段尚未完成。不能把同一账号的自查说成另一位开发者的批准，也不能绕过仓库的保护规则。
 
-接口、备份恢复与密码管理回归检查使用 Node.js 22.21.0，无需安装依赖：`node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs`。GitHub 的 Content Studio 工作流会在相关 PR 和合并到 `main` 后执行同一检查。浏览器交互仍需按阶段验证。不得提交 `work/content-studio/data/`、`.cache/`、真实资料、附件、密码或密钥；合并源码不等于部署网站。
+接口、备份恢复与账号密码管理回归检查使用 Node.js 22.21.0，无需安装依赖：`node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs`。GitHub 的 Content Studio 工作流会在相关 PR 和合并到 `main` 后执行同一检查。浏览器交互仍需按阶段验证。不得提交 `work/content-studio/data/`、`.cache/`、真实资料、附件、密码、恢复码或密钥；合并源码不等于部署网站。
 
 ## 安全与资料
 

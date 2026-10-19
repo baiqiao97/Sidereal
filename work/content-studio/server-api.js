@@ -25,6 +25,9 @@ const serverApi = (function () {
     function isPrivateRequest(url) {
         return url.indexOf("/api/drafts") === 0 ||
             url === "/api/auth/password" ||
+            // 生成恢复码需要当前会话身份；reset-password 保持公开，
+            // 否则忘记密码时迟到的会话 401 会触发 auth-required 打断恢复流程
+            url === "/api/auth/recovery-code" ||
             /^\/api\/publications\/[^/]+\/import$/.test(url) ||
             url === "/api/backups/restore";
     }
@@ -303,6 +306,26 @@ const serverApi = (function () {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
+            });
+        },
+
+        // 生成离线恢复码：需当前会话 cookie 与当前密码；成功 200 {code}
+        // 当前密码错 400 保持登录；会话失效 401/403 触发统一登录提醒
+        authGenerateRecoveryCode: function (currentPassword) {
+            return request("/api/auth/recovery-code", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ currentPassword: currentPassword })
+            });
+        },
+
+        // 凭恢复码重置密码（公开端点，无需登录）：成功 200 {changed:true}，
+        // 成功后服务端清除会话 cookie 但不自动登录；码/用户名不对抛错且不触碰 cookie
+        authResetPassword: function (username, code, newPassword) {
+            return request("/api/auth/reset-password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username: username, code: code, newPassword: newPassword })
             });
         }
     };

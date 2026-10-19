@@ -11,7 +11,7 @@ const port = Number(process.argv[3] || 4173);
 const dataDir = path.resolve(process.argv[4] || path.join(root, 'data'));
 const maxBodyBytes = 52 * 1024 * 1024;
 const maxFileBytes = 50 * 1024 * 1024;
-// 密码端点 JSON 正文上限 8KiB；草稿正文仍为 52MiB
+// 密码/恢复码端点 JSON 正文上限 8KiB；草稿正文仍为 52MiB
 const authBodyMaxBytes = 8 * 1024;
 const localHost = `127.0.0.1:${port}`;
 const localOrigin = `http://127.0.0.1:${port}`;
@@ -160,7 +160,7 @@ function readSessionToken(request) {
     return match ? match[1] : null;
 }
 
-// setup/register/login 三端点共享的固定窗口限流：30 次/分钟
+// setup/register/login/密码/恢复码/密码重置 端点共享的固定窗口限流：30 次/分钟
 const authLimit = { start: Date.now(), count: 0 };
 function checkAuthRate() {
     const now = Date.now();
@@ -192,7 +192,7 @@ async function handleApi(request, response, pathname) {
         return sendJson(response, 200, { ok: true });
     }
     // ---- 账号接口（匿名可访问，同本机 Host/Origin 检查，不开放 CORS）----
-    let match = pathname.match(/^\/api\/auth\/(me|setup|register|login|logout|password)$/);
+    let match = pathname.match(/^\/api\/auth\/(me|setup|register|login|logout|password|recovery-code|reset-password)$/);
     if (match) {
         const action = match[1];
         if (action === 'me') {
@@ -214,6 +214,28 @@ async function handleApi(request, response, pathname) {
             const payload = await readJson(request, authBodyMaxBytes);
             await store.auth.changePassword(token, payload.currentPassword, payload.newPassword);
             // 已改使全部 session 失效，通知调用端清除本 cookie
+            return sendJson(response, 200, { changed: true }, { 'Set-Cookie': clearSessionCookie() });
+        }
+        // 离线账号恢复码：需有效会话；当前密码错误 400，返回一次性恢复码
+        if (action === 'recovery-code') {
+            if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
+            const token = readSessionToken(request);
+            if (!token) throw fail(401, '请先登录');
+            const user = await store.auth.current(token);
+            if (!user) throw fail(401, '请先登录');
+            checkStudioUser(request, user, true);
+            checkAuthRate();
+            const payload = await readJson(request, authBodyMaxBytes);
+            const result = await store.auth.generateRecoveryCode(token, payload.currentPassword);
+            // 生成恢复码不改变会话，cookie 保持原样
+            return sendJson(response, 200, { code: result.code });
+        }
+        // 忘记密码的公开重置：凭恢复码重设密码；失败不触碰任何 cookie，成功也不自动登录
+        if (action === 'reset-password') {
+            if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
+            checkAuthRate();
+            const payload = await readJson(request, authBodyMaxBytes);
+            await store.auth.resetPassword(payload.username, payload.code, payload.newPassword);
             return sendJson(response, 200, { changed: true }, { 'Set-Cookie': clearSessionCookie() });
         }
         if (method !== 'POST') throw fail(405, 'Method not allowed', 'POST');
