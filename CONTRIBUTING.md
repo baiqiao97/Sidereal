@@ -33,7 +33,7 @@ git push -u origin feat/law-categories
 
 只有上述流程全部完成，才可将该开发阶段标记为完成。仅写完代码、通过本地测试、推送分支或创建 PR 均不算阶段完成；等待检查、审查修正或合并时，应明确报告阶段尚未完成。不能把同一账号的自查说成另一位开发者的批准，也不能绕过仓库的保护规则。
 
-接口、备份恢复、回收站、用量与账号密码管理回归检查无需安装依赖：`node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs work/content-studio/test/hosted.test.cjs work/content-studio/test/publisher.test.cjs work/content-studio/test/trash.test.cjs work/content-studio/test/usage.test.cjs`。GitHub 的 Content Studio 工作流会在 Node.js 22.21.0 和 22 分支的维护版本上执行同一检查，并验证反向代理示例语法。浏览器交互仍需按阶段验证。不得提交 `work/content-studio/data/`、`.cache/`、真实资料、附件、密码、恢复码或密钥；合并源码不等于部署网站。
+接口、备份恢复、回收站、用量、停机与账号密码管理回归检查无需安装依赖：`node --test work/content-studio/test/api.test.cjs work/content-studio/test/backup.test.cjs work/content-studio/test/password.test.cjs work/content-studio/test/recovery.test.cjs work/content-studio/test/hosted.test.cjs work/content-studio/test/publisher.test.cjs work/content-studio/test/trash.test.cjs work/content-studio/test/usage.test.cjs work/content-studio/test/shutdown.test.cjs`。GitHub 的 Content Studio 工作流会在 Node.js 22.21.0 和 22 分支的维护版本上执行同一检查，并验证反向代理示例语法。浏览器交互仍需按阶段验证。不得提交 `work/content-studio/data/`、`.cache/`、真实资料、附件、密码、恢复码或密钥；合并源码不等于部署网站。
 
 ## Content Studio 联网测试配置
 
@@ -52,6 +52,8 @@ STUDIO_PUBLIC_ORIGIN=https://studio.example.test node /absolute/path/content-stu
 应用依据固定来源检查 Host/Origin 并启用 Secure Cookie，不信任 `X-Forwarded-Host` 或 `X-Forwarded-Proto`。代理只转发至 Node 白名单服务，**不要用文件服务器暴露项目根目录或数据目录**。停止进程后备份整个独立数据目录，可保留账户及全部资料；页面导出的是单份资料备份，不包含账号和恢复码。需要恢复服务数据时先停止服务、保留现有目录，再由操作者选择备份，不能自动覆盖。
 
 当前认证限流是全服务共享的 30 次/分钟，适合小范围测试；公开面向大量用户前还需按实际代理、流量和存储容量调整防滥用策略。停用联网测试时停止代理及该实例；用同一数据目录取消 `STUDIO_PUBLIC_ORIGIN` 后可恢复本机模式，账户与资料保留。
+
+服务收到 `SIGTERM` 或 `SIGINT` 后停止接受新连接，等待已有请求及备份临时文件清理完成，再关闭数据库并以状态码 0 退出；已有连接上的新请求返回 503，可稍后重试。等待上限为 30 秒，超时会中断剩余连接并以状态码 1 退出，此时不能认定上传或备份已完成。Linux 服务管理器应发送 `SIGTERM`，并将强制终止等待时间留得长于 30 秒。前台终端可用 Ctrl+C；Windows 的 `Stop-Process`、任务管理器强制结束及 `SIGKILL` 都不能保证执行此等待流程。进程完全退出后再备份独立数据目录。信号与 HTTP 关闭语义参见 [Node.js HTTP 文档](https://nodejs.org/download/release/v22.21.0/docs/api/http.html#serverclosecallback)及[进程信号文档](https://nodejs.org/download/release/v22.21.0/docs/api/process.html#signal-events)。
 
 ## 安全与资料
 

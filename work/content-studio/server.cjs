@@ -504,11 +504,48 @@ async function handle(request, response) {
     });
 }
 
+let shuttingDown = false;
+let activeHandlers = 0;
+let listenerClosed = false;
+let shutdownTimer = null;
+let finished = false;
+
+function finishShutdown(exitCode) {
+    if (finished) return;
+    finished = true;
+    if (shutdownTimer !== null) {
+        clearTimeout(shutdownTimer);
+        shutdownTimer = null;
+    }
+    try {
+        store.close();
+        process.exit(exitCode);
+    } catch {
+        console.error('数据库关闭失败');
+        process.exit(1);
+    }
+}
+
+function maybeFinishShutdown() {
+    if (shuttingDown && listenerClosed && activeHandlers === 0) finishShutdown(0);
+}
+
 const server = http.createServer((request, response) => {
     // 通用安全响应头：在业务处理前就位；本机原型的反代负责 TLS 终结，故 HSTS 不在此设置
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Referrer-Policy', 'no-referrer');
+    if (shuttingDown) {
+        response.writeHead(503, {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'Connection': 'close',
+            'Retry-After': '1'
+        });
+        response.end(JSON.stringify({ error: '服务正在停止，请稍后重试' }));
+        return;
+    }
+    activeHandlers += 1;
     handle(request, response).catch(error => {
         const status = error && Number.isInteger(error.status) ? error.status : 500;
         // 500 统一隐藏内部细节：不暴露本机路径或 SQL 信息
@@ -526,18 +563,30 @@ const server = http.createServer((request, response) => {
         if (status === 413) request.socket.end();
         else request.resume();
         if (status === 500) console.error(error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+        activeHandlers -= 1;
+        maybeFinishShutdown();
     });
 });
 
 function shutdown() {
-    try { server.close(); } catch { /* 忽略重复关闭 */ }
-    try { store.close(); } catch { /* 忽略重复关闭 */ }
+    if (shuttingDown) return;
+    shuttingDown = true;
+    shutdownTimer = setTimeout(() => {
+        console.error('服务停止等待超过30秒，正在中断剩余连接');
+        server.closeAllConnections();
+        finishShutdown(1);
+    }, 30000);
+    server.close(() => {
+        listenerClosed = true;
+        maybeFinishShutdown();
+    });
 }
 
 server.on('error', error => {
     console.error(error.message);
     process.exit(1);
 });
-process.on('SIGINT', () => { shutdown(); process.exit(0); });
-process.on('SIGTERM', () => { shutdown(); process.exit(0); });
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
 server.listen(port, '127.0.0.1', () => console.log(`Content Studio: ${expectedOrigin} (backend: 127.0.0.1:${port})`));
