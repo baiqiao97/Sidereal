@@ -370,6 +370,15 @@ async function handleApi(request, response, pathname) {
         if (!trashUser) throw fail(401, '请先登录');
         checkStudioUser(request, trashUser, method !== 'GET');
     }
+    // ---- 账户用量接口：与回收站同样的登录/身份要求；GET 可不带 X-Studio-User，带了就校验 ----
+    if (pathname === '/api/account/usage') {
+        const token = readSessionToken(request);
+        const accountUser = token ? await store.auth.current(token) : null;
+        if (!accountUser) throw fail(401, '请先登录');
+        checkStudioUser(request, accountUser, method !== 'GET');
+        if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
+        return sendJson(response, 200, store.getUsage(accountUser.id));
+    }
     if (/^\/api\/trash\/?$/.test(pathname)) {
         if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
         return sendJson(response, 200, store.listTrash(trashUser.id));
