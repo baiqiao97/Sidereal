@@ -109,6 +109,9 @@ let storageMode = "browser";
 let accounts = null;
 // 登录状态变化后，丢弃之前发出的列表请求，避免退出或换号后重显旧资料。
 let accountEpoch = 0;
+// 编辑/历史读取的递增序号：只有最新一次读取的结果允许写界面
+let editReadSeq = 0;
+let historyReadSeq = 0;
 // 当前登录账户（仅保存在内存里）；用于确认文案与恢复前守卫，不本地持久化，
 // 也不据此自动重新登录（换号时恢复如未过期交给 epoch 守卫丢弃结果）
 let currentAccount = null;
@@ -328,14 +331,21 @@ saveDraftButton.addEventListener("click", async function () {
     operationBusy = true;
     saveDraftButton.disabled = true;
     newDraftButton.disabled = true;
+    // 固定本次保存的账号纪元；期间换号/登出用 epoch 守卫丢弃迟到结果
+    const saveEpoch = accountEpoch;
+    // 保存会改动正在编辑的资料：作废尚未返回的编辑读取，防止晚到结果覆盖表单
+    editReadSeq += 1;
     try {
         // 编辑已有资料时先读原纪录；读不到说明已删除，停止本次保存
         let existing = null;
         if (editingId) {
             try {
                 const db = await dbPromise;
+                if (saveEpoch !== accountEpoch) return;
                 existing = await getDraft(db, editingId);
+                if (saveEpoch !== accountEpoch) return;
             } catch (error) {
+                if (saveEpoch !== accountEpoch) return;
                 showError("读取原资料失败，未保存。请重试。");
                 return;
             }
@@ -355,7 +365,10 @@ saveDraftButton.addEventListener("click", async function () {
         // 附件取舍：新选文件 > 沿用旧附件（未点移除）> 无附件。
         // file 已是规范 {name, blob:真实Blob} 对象，记录与版本快照直接存同一个对象，
         // 不再包一层，保证 blob 始终是真 Blob（下载时 createObjectURL 参数正确）。
+        // 同时固定这次保存提交时的附件状态：保存期间用户新选/改移除标记不再影响本次
         const file = getCurrentAttachment();
+        const submittedFile = fileInput.files[0] || null;
+        const submittedRemoved = attachmentRemoved;
 
         const now = Date.now();
         const description = descriptionInput.value.trim();
@@ -384,6 +397,7 @@ saveDraftButton.addEventListener("click", async function () {
         };
 
         const db = await dbPromise;
+        if (saveEpoch !== accountEpoch) return;
 
         // 服务器模式：保存前按载入时记住的版本核对；其他窗口已改过就不覆盖
         if (isServerDb(db) && editingId && existing.revision !== editingRevision) {
@@ -392,6 +406,7 @@ saveDraftButton.addEventListener("click", async function () {
         }
 
         const saved = await putDraft(db, record);
+        if (saveEpoch !== accountEpoch) return;
 
         // ---- 保存成功之后 ----
         const savedId = record.id;
@@ -403,10 +418,16 @@ saveDraftButton.addEventListener("click", async function () {
         } else {
             currentAttachment = file;
         }
-        attachmentRemoved = false;
+        // 移除标记按提交时状态结算；保存期间用户改过就不重置，保留其未生效意图
+        if (submittedRemoved === attachmentRemoved) {
+            attachmentRemoved = false;
+        }
 
-        // 保存后清空文件 input（防止下次误把旧文件当成“新选的”），已保存的附件不受影响
-        fileInput.value = "";
+        // 只在文件选择框里仍是“这次提交的那份”时清空（null 归一化）；
+        // 保存期间新选的文件原样保留，下次保存会用它生成新版本
+        if ((fileInput.files[0] || null) === submittedFile) {
+            fileInput.value = "";
+        }
         updateAttachmentStatus();
         updateEditingStatus();
 
@@ -417,10 +438,12 @@ saveDraftButton.addEventListener("click", async function () {
 
         // 重新渲染列表；如果历史正开着且就是这条，也一起刷新
         await renderDrafts();
+        if (saveEpoch !== accountEpoch) return;
         if (!historySection.hidden && historyDraftId === savedId) {
             await openHistory(savedId);
         }
     } catch (error) {
+        if (saveEpoch !== accountEpoch) return;
         // 失败绝不能冒充成功：表单内容原样保留，让用户重试
         showError("保存失败：" + (error && error.message ? error.message : "数据库写入出错") + "。表单内容未丢弃，请重试。");
         return;
@@ -492,6 +515,9 @@ removeAttachmentButton.addEventListener("click", function () {
 // ============================================================
 /** 清空资料表单/编辑状态/附件/核对/历史；只动界面状态，不删除任何已保存的资料 */
 function clearEditor() {
+    // 作废尚未返回的编辑/历史读取：界面已清空，晚到结果不能再写回
+    editReadSeq += 1;
+    historyReadSeq += 1;
     form.reset();
     fileInput.value = "";
     reviewSection.hidden = true;
@@ -731,6 +757,8 @@ async function publishDraft(draft) {
     operationBusy = true;
     saveDraftButton.disabled = true;
     newDraftButton.disabled = true;
+    // 固定开始时的账号纪元；期间换号/登出由 epoch 守卫丢弃迟到结果
+    const publishEpoch = accountEpoch;
     try {
         const expectedVersion = draft.revision;
         const versionNote = typeof expectedVersion === "number"
@@ -744,12 +772,14 @@ async function publishDraft(draft) {
         hideError();
         try {
             const updated = await serverApi.publish(draft.id, expectedVersion);
+            if (publishEpoch !== accountEpoch) return;
             const publishedVersion = (updated && updated.publication && typeof updated.publication.version === "number")
                 ? updated.publication.version
                 : expectedVersion;
             setStorageStatus("已把“" + draft.title + "”的第 " + publishedVersion + " 版发布到公共仓库。");
             await renderDrafts();
         } catch (error) {
+            if (publishEpoch !== accountEpoch) return;
             showError("发布失败：" + (error && error.message ? error.message : "本机服务出错") + "。表单内容和资料列表未改动。");
             return;
         }
@@ -766,6 +796,8 @@ async function unpublishDraft(draft) {
     operationBusy = true;
     saveDraftButton.disabled = true;
     newDraftButton.disabled = true;
+    // 固定开始时的账号纪元；期间换号/登出由 epoch 守卫丢弃迟到结果
+    const publishEpoch = accountEpoch;
     try {
         const publication = draft.publication || null;
         if (!publication) return;
@@ -778,9 +810,11 @@ async function unpublishDraft(draft) {
         hideError();
         try {
             await serverApi.unpublish(draft.id, expectedPublishedVersion);
+            if (publishEpoch !== accountEpoch) return;
             setStorageStatus("已撤回“" + draft.title + "”的公共版本，草稿和历史保留。");
             await renderDrafts();
         } catch (error) {
+            if (publishEpoch !== accountEpoch) return;
             showError("撤回失败：" + (error && error.message ? error.message : "本机服务出错") + "。表单内容和资料列表未改动。");
             return;
         }
@@ -1269,7 +1303,11 @@ function downloadAttachment(fileRecord) {
 async function startEdit(id) {
     if (writesDisabled() || operationBusy) return;
     hideError();
+    // 固定纪元与读序：换号/登出或更新的编辑读取都能让本次迟到结果作废
+    const readEpoch = accountEpoch;
+    const readSeq = ++editReadSeq;
     const readResult = await getDraftSafe(id);
+    if (readEpoch !== accountEpoch || readSeq !== editReadSeq) return;
     if (readResult === "read-error") {
         showError("读取资料失败，未载入任何资料。请重试。");
         return;
@@ -1402,8 +1440,13 @@ async function getDraftSafe(id) {
 let historyDraftId = null;
 
 async function openHistory(id) {
-    if (storageFailed) return;
+    // 未登录/存储失效时不请求私有内容
+    if (writesDisabled()) return;
+    // 固定纪元与读序：换号/登出或更新的历史读取都能让本次迟到结果作废
+    const readEpoch = accountEpoch;
+    const readSeq = ++historyReadSeq;
     const readResult = await getDraftSafe(id);
+    if (readEpoch !== accountEpoch || readSeq !== historyReadSeq) return;
     if (readResult === "read-error") {
         showError("读取资料失败，无法查看历史。请重试。");
         return;
@@ -1483,8 +1526,12 @@ async function restoreVersion(id, versionNumber) {
     operationBusy = true;
     saveDraftButton.disabled = true;
     newDraftButton.disabled = true;
+    // 作废尚未返回的编辑读取，固定本次恢复的账号纪元
+    editReadSeq += 1;
+    const restoreEpoch = accountEpoch;
     try {
         const readResult = await getDraftSafe(id);
+        if (restoreEpoch !== accountEpoch) return;
         if (readResult === "read-error") {
             showError("读取资料失败，无法恢复。请重试。");
             return;
@@ -1532,7 +1579,9 @@ async function restoreVersion(id, versionNumber) {
         };
 
         const db = await dbPromise;
+        if (restoreEpoch !== accountEpoch) return;
         const saved = await putDraft(db, updated);
+        if (restoreEpoch !== accountEpoch) return;
 
         // ---- 事务成功后，才把旧版内容同步到编辑表单与当前附件 ----
         editingId = draft.id;
@@ -1556,9 +1605,11 @@ async function restoreVersion(id, versionNumber) {
 
         setStorageStatus("已把版本 " + versionNumber + " 恢复为第 " + restoredVersions.length + " 个版本（原版本保留）。");
         await renderDrafts();
+        if (restoreEpoch !== accountEpoch) return;
         openHistory(id);
     } catch (error) {
-        // 恢复失败：提示且不改动任何数据（表单/附件/列表/历史保持原状）
+        if (restoreEpoch !== accountEpoch) return;
+        // 恢复失败时保留表单、附件、列表和历史。
         showError("恢复失败：" + (error && error.message ? error.message : "数据库操作出错") + "。资料未改动。");
         return;
     } finally {
@@ -1569,6 +1620,8 @@ async function restoreVersion(id, versionNumber) {
 }
 
 function closeHistory() {
+    // 关闭后作废尚未返回的历史读取：晚到的旧内容不再重新打开历史
+    historyReadSeq += 1;
     historySection.hidden = true;
     historyDraftId = null;
     historyRevision = null;
