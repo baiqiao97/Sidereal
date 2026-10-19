@@ -3,6 +3,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const { randomUUID } = require('node:crypto');
 const { createAuth } = require('./auth.cjs');
+const { writeDraftBackup, restoreDraftBackup } = require('./backup.cjs');
 
 const CATEGORIES = ['law', 'notes', 'questions'];
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
@@ -343,7 +344,21 @@ function createStore(dbPath) {
         db.close();
     }
 
-    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, close };
+    // 导出备份：归属校验后交给 backup 助手完成读事务
+    function exportBackup(id, filePath, userId) {
+        checkId(id);
+        requireOwner(id, userId);
+        return writeDraftBackup(db, id, filePath);
+    }
+
+    // 恢复备份：backup 助手校验档案并在一个主写事务内完成导入，这里不再额外包事务
+    function restoreBackup(filePath, userId) {
+        if (typeof userId !== 'string' || !userId || !statements.user.get(userId)) throw fail(400, 'userId 必须是有效用户');
+        const newId = restoreDraftBackup(db, filePath, userId);
+        return buildDto(newId);
+    }
+
+    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, exportBackup, restoreBackup, close };
 }
 
 module.exports = { createStore };

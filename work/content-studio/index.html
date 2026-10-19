@@ -159,6 +159,20 @@
         <p><a class="public-link" href="/public">查看公共仓库</a></p>
     </section>
 
+    <!-- 资料备份与恢复：仅本机服务模式由 JS 显示；导出不改动资料，恢复生成新草稿 -->
+    <section id="backupSection" hidden>
+        <h2>资料备份与恢复</h2>
+        <p class="backup-note">导出每份资料的全部版本和附件；恢复为新的未发布资料，现有资料保留。备份包含资料正文及附件，请妥善保存。最大512MiB，仅本机账户模式。</p>
+        <p>
+            <label for="backupInput">选择 .studio-backup 备份文件
+                <input type="file" id="backupInput" accept=".studio-backup">
+            </label>
+        </p>
+        <p>
+            <button type="button" id="restoreBackupButton">恢复备份</button>
+        </p>
+    </section>
+
     <script src="server-api.js"></script>
     <script src="account-ui.js"></script>
     <script src="app.js"></script>
