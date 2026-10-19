@@ -7,6 +7,9 @@ const { createAuth } = require('./auth.cjs');
 const CATEGORIES = ['law', 'notes', 'questions'];
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,100}$/;
 
+// 公开版本 SELECT：列表与单条查询共用，保证两边字段一致；LEFT JOIN 保留未认领草稿（publisher 为 null）
+const PUBLISHED_SELECT = 'SELECT p.draftId AS id, p.version, p.publishedAt, v.title, v.description, v.category, v.fileName, v.fileType, LENGTH(v.fileData) AS fileSize, u.username AS publisher FROM publications p JOIN versions v ON v.draftId = p.draftId AND v.version = p.version LEFT JOIN draft_owners o ON o.draftId = p.draftId LEFT JOIN users u ON u.id = o.userId';
+
 function fail(status, message) {
     const error = new Error(message);
     error.status = status;
@@ -69,8 +72,10 @@ function createStore(dbPath) {
         user: db.prepare('SELECT id FROM users WHERE id = ?'),
         // 直接在 SQL 内复制版本行，避免把大附件读进 JS 再写回
         copyVersion: db.prepare('INSERT INTO versions (draftId, version, savedAt, title, description, category, fileName, fileType, fileData) SELECT ?, 1, ?, title, description, category, fileName, fileType, fileData FROM versions WHERE draftId = ? AND version = ?'),
-        // 只读已发布版本本身的元数据；用 JOIN 保证列表不含草稿当前内容、历史版本或 BLOB
-        publishedList: db.prepare('SELECT p.draftId AS id, p.version, p.publishedAt, v.title, v.description, v.category, v.fileName, v.fileType, LENGTH(v.fileData) AS fileSize, u.username AS publisher FROM publications p JOIN versions v ON v.draftId = p.draftId AND v.version = p.version LEFT JOIN draft_owners o ON o.draftId = p.draftId LEFT JOIN users u ON u.id = o.userId ORDER BY p.publishedAt DESC, p.draftId')
+        // 只读已发布版本本身的元数据；用 JOIN 保证列表不含草稿当前内容、历史版本或 BLOB。
+        // 列表与单条查询共用同一 SELECT 串：列表只补 ORDER BY，单条只补 WHERE
+        publishedList: db.prepare(PUBLISHED_SELECT + ' ORDER BY p.publishedAt DESC, p.draftId'),
+        publishedSingle: db.prepare(PUBLISHED_SELECT + ' WHERE p.draftId = ?')
     };
 
     function runTransaction(action) {
@@ -300,9 +305,9 @@ function createStore(dbPath) {
         });
     }
 
-    // 公开列表：最近发布在前，DTO 只含元数据字段
-    function listPublications() {
-        return statements.publishedList.all().map(row => ({
+    // 公开 DTO 映射：列表与单条共用，只含元数据字段，不含 BLOB
+    function mapPublication(row) {
+        return {
             id: row.id,
             version: row.version,
             publishedAt: row.publishedAt,
@@ -311,7 +316,19 @@ function createStore(dbPath) {
             category: row.category,
             publisher: row.publisher || null,
             file: row.fileSize != null ? { name: row.fileName, type: row.fileType, size: row.fileSize, url: '/api/publications/' + row.id + '/file' } : null
-        }));
+        };
+    }
+
+    // 公开列表：最近发布在前
+    function listPublications() {
+        return statements.publishedList.all().map(mapPublication);
+    }
+
+    // 匿名单条公开查询：仅按 publications 当前快照取一行；缺失/未发布返回 null，绝无写操作
+    function getPublication(id) {
+        checkId(id);
+        const row = statements.publishedSingle.get(id);
+        return row ? mapPublication(row) : null;
     }
 
     // 公开下载：只按当前 publication.version 取附件，公开 URL 不接受 version 参数；
@@ -326,7 +343,7 @@ function createStore(dbPath) {
         db.close();
     }
 
-    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublishedFile, close };
+    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, close };
 }
 
 module.exports = { createStore };

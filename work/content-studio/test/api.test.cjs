@@ -7,9 +7,37 @@ const net = require('node:net');
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
+const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const password = 'Only-Synthetic-Test-Password!';
+
+test('public detail reads never use private-import identity handling', async () => {
+  const requests = [], events = [];
+  let status = 200;
+  const source = await fs.readFile(path.join(root, 'server-api.js'), 'utf8');
+  const api = vm.runInNewContext(source + '\nserverApi;', {
+    Headers, Event,
+    window: { dispatchEvent: event => events.push(event.type) },
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return { status, ok: status < 400, json: async () => ({ error: 'Synthetic HTTP failure' }) };
+    }
+  });
+  api.setUser({ id: 'synthetic_reader' });
+  for (const id of ['import', 'import_notes', 'normal']) {
+    await api.getPublication(id);
+    const request = requests.at(-1);
+    assert.equal(request.url, '/api/publications/' + id);
+    assert.equal(request.options.headers?.get('X-Studio-User'), undefined);
+  }
+  status = 403;
+  await assert.rejects(api.getPublication('import'), error => error.status === 403);
+  assert.deepEqual(events, [], 'a public-read failure must not reset private login state');
+  status = 200;
+  await api.importPublication('normal', 1);
+  assert.equal(requests.at(-1).options.headers.get('X-Studio-User'), 'synthetic_reader');
+});
 
 test('Content Studio: local accounts, versions and public copies', { timeout: 60000 }, async t => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sidereal-studio-test-'));
@@ -102,6 +130,11 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
   const anon = client(), a = client(), b = client();
   let copied;
 
+  await t.test('unclaimed legacy publications have anonymous detail links', async () => {
+    const list = await expect(anon, '/api/publications', 'GET', undefined, 200);
+    assert.deepEqual(await expect(anon, '/api/publications/legacy', 'GET', undefined, 200), list[0]);
+  });
+
   await t.test('legacy data requires explicit first-account claim', async () => {
     assert.deepEqual(await expect(anon, '/api/auth/me', 'GET', undefined, 200), { user: null, needsSetup: true, legacyDraftCount: 1 });
     const unclaimed = await expect(anon, '/api/publications', 'GET', undefined, 200);
@@ -132,6 +165,37 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
     await expect(a, '/api/drafts/new', 'PUT', form('missing identity', 0), 400, { 'X-Studio-User': '' });
     await expect(a, '/api/drafts/new', 'PUT', form('changed account', 0), 403, { 'X-Studio-User': b.user.id });
     await expect(a, '/api/drafts', 'HEAD', undefined, 405, { 'X-Studio-User': '' });
+  });
+
+  await t.test('public detail links follow publication updates and become unavailable on withdrawal', async () => {
+    const route = '/api/publications/detail_test';
+    await expect(a, '/api/drafts/detail_test', 'PUT', form('Public detail one', 0, original), 201);
+    await expect(anon, route, 'GET', undefined, 404);
+    await expect(a, '/api/drafts/detail_test/publication', 'PUT', { expectedVersion: 1 }, 200);
+    const first = await expect(anon, route, 'GET', undefined, 200, { 'X-Studio-User': 'irrelevant-for-public-read' });
+    const list = await expect(anon, '/api/publications', 'GET', undefined, 200);
+    assert.deepEqual(first, list.find(item => item.id === 'detail_test'));
+    assert.deepEqual(Object.keys(first).sort(), ['category', 'description', 'file', 'id', 'publishedAt', 'publisher', 'title', 'version']);
+    assert.equal(first.publisher, 'owner_a');
+    assert.deepEqual(await expect(anon, first.file.url, 'GET', undefined, 200), original);
+    for (const method of ['POST', 'PUT', 'DELETE', 'HEAD']) await expect(anon, route, method, undefined, 405);
+    await expect(anon, '/api/publications/invalid%20id', 'GET', undefined, 400);
+    await expect(anon, '/api/publications/' + 'x'.repeat(101), 'GET', undefined, 400);
+    await expect(anon, '/api/publications/missing', 'GET', undefined, 404);
+    await expect(anon, route, 'GET', undefined, 403, { Origin: 'https://example.invalid' });
+    await expect(a, '/api/drafts/detail_test', 'PUT', form('Private detail two', 1, changed), 200);
+    assert.deepEqual(await expect(anon, route, 'GET', undefined, 200), first, 'private edits must not change public detail');
+    await expect(a, '/api/drafts/detail_test/publication', 'PUT', { expectedVersion: 2 }, 200);
+    const updated = await expect(anon, route, 'GET', undefined, 200);
+    assert.equal(updated.title, 'Private detail two');
+    assert.equal(updated.version, 2);
+    assert.deepEqual(await expect(anon, updated.file.url, 'GET', undefined, 200), changed);
+    await expect(a, '/api/drafts/detail_test/publication', 'DELETE', { expectedPublishedVersion: 2 }, 200);
+    await expect(anon, route, 'GET', undefined, 404);
+    await expect(a, '/api/drafts/detail_test', 'GET', undefined, 200);
+    await expect(a, '/api/drafts/detail_test/publication', 'PUT', { expectedVersion: 2 }, 200);
+    await expect(a, '/api/drafts/detail_test', 'DELETE', { expectedVersion: 2 }, 204);
+    await expect(anon, route, 'GET', undefined, 404);
   });
 
   await t.test('versions append and public copies use the published snapshot', async () => {
