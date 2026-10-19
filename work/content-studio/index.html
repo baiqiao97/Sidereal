@@ -232,6 +232,19 @@
         <div id="trashList"></div>
     </section>
 
+    <!-- 账户资料用量：只读统计；仅本机服务模式且已登录时由 JS 显示 -->
+    <section id="usageSection" hidden>
+        <h2>账户资料用量</h2>
+        <p class="backup-note">附件保存量包含全部历史版本和回收站中的附件，同一附件在多个版本中保存会重复计入；不等于服务器磁盘占用。</p>
+        <p id="usageSummary"></p>
+        <p id="usageUpdated" class="status-line"></p>
+        <p>
+            <button type="button" id="usageRefresh">刷新用量</button>
+        </p>
+        <p id="usageStatus" class="status-line" role="status" aria-live="polite"></p>
+        <p class="backup-note">保存、恢复或删除后，可刷新查看最新统计。</p>
+    </section>
+
     <!-- 版本历史：某条资料的每个保存快照，可恢复为新版本 -->
     <section id="historySection" hidden>
         <h2>版本历史</h2>

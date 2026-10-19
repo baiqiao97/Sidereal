@@ -30,7 +30,8 @@ const serverApi = (function () {
             // 否则忘记密码时迟到的会话 401 会触发 auth-required 打断恢复流程
             url === "/api/auth/recovery-code" ||
             /^\/api\/publications\/[^/]+\/import$/.test(url) ||
-            url === "/api/backups/restore";
+            url === "/api/backups/restore" ||
+            url === "/api/account/usage";
     }
 
     // 统一 fetch：为私有请求注入 X-Studio-User 头（内存中的当前用户 id）；
@@ -185,6 +186,11 @@ const serverApi = (function () {
         // 回收站列表：只含本人回收记录的元数据（含 trashToken），最近删除在前
         listTrash: function () {
             return request("/api/trash", { method: "GET" });
+        },
+
+        // 账户用量：私有请求，成功返回 {activeDrafts,trashedDrafts,versions,attachmentBytes}
+        getUsage: function () {
+            return request("/api/account/usage", { method: "GET" });
         },
 
         // 恢复回收站记录：成功 200 返回完整草稿 DTO（publication 为 null，历史与版本号不变）

@@ -91,6 +91,18 @@ function createStore(dbPath) {
         insertTrash: db.prepare('INSERT INTO draft_trash (draftId, deletedAt, trashToken) VALUES (?, ?, ?)'),
         trash: db.prepare('SELECT deletedAt, trashToken FROM draft_trash WHERE draftId = ?'),
         deleteTrash: db.prepare('DELETE FROM draft_trash WHERE draftId = ?'),
+        // 账户用量：一次聚合本人全部版本，回收站与历史附件均计入，不返回附件内容。
+        usage: db.prepare(`
+            SELECT COUNT(DISTINCT CASE WHEN t.draftId IS NULL THEN d.id END) AS activeDrafts,
+                   COUNT(DISTINCT CASE WHEN t.draftId IS NOT NULL THEN d.id END) AS trashedDrafts,
+                   COUNT(v.version) AS versions,
+                   COALESCE(SUM(LENGTH(v.fileData)), 0) AS attachmentBytes
+            FROM draft_owners o
+            JOIN drafts d ON d.id = o.draftId
+            LEFT JOIN draft_trash t ON t.draftId = d.id
+            JOIN versions v ON v.draftId = d.id
+            WHERE o.userId = ?
+        `),
         trashList: db.prepare('SELECT d.id, d.currentVersion AS revision, t.deletedAt, t.trashToken, v.title, v.category FROM draft_trash t JOIN drafts d ON d.id = t.draftId JOIN draft_owners o ON o.draftId = d.id JOIN versions v ON v.draftId = d.id AND v.version = d.currentVersion WHERE o.userId = ? ORDER BY t.deletedAt DESC, d.id')
     };
 
@@ -254,6 +266,12 @@ function createStore(dbPath) {
             statements.deletePublication.run(id);
             return true;
         });
+    }
+
+    // 账户用量统计：只读、单条 SQL、仅本人归属的草稿；全部为纯数字，空账户全 0
+    function getUsage(userId) {
+        // 单值聚合（COUNT/SUM + COALESCE）必返回一行，数值直接透传
+        return { ...statements.usage.get(userId) };
     }
 
     // 回收站令牌校验：非空字符串且不超过 100 字符
@@ -429,7 +447,7 @@ function createStore(dbPath) {
         return buildDto(newId);
     }
 
-    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, exportBackup, restoreBackup, listTrash, restoreTrash, purgeTrash, close };
+    return { auth, list, get, save, remove, getFile, publish, unpublish, importPublication, listPublications, getPublication, getPublishedFile, exportBackup, restoreBackup, listTrash, restoreTrash, purgeTrash, getUsage, close };
 }
 
 module.exports = { createStore };

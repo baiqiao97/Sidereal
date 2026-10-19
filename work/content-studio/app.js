@@ -54,6 +54,13 @@ const trashRefresh = document.getElementById("trashRefresh");
 const trashStatus = document.getElementById("trashStatus");
 const trashList = document.getElementById("trashList");
 
+// 账户资料用量（index 内；仅本机服务模式且已登录时显示，只读）
+const usageSection = document.getElementById("usageSection");
+const usageSummary = document.getElementById("usageSummary");
+const usageUpdated = document.getElementById("usageUpdated");
+const usageRefresh = document.getElementById("usageRefresh");
+const usageStatus = document.getElementById("usageStatus");
+
 // ---- 固定文案 ----
 // 下拉框选项值到中文名称的对照表，展示时用这份数据翻译
 const CATEGORY_TEXT = {
@@ -216,6 +223,8 @@ function setStartupDisabled(disabled) {
     backupInput.disabled = merged || storageMode !== "server";
     // 回收站刷新同属启动控制：未登录/存储失效/操作锁定期间不允许刷
     trashRefresh.disabled = merged;
+    // 用量刷新同属只读操作控制：登录/服务可用后才允许刷
+    usageRefresh.disabled = merged;
     // 已渲染的回收站卡片按钮一并控制：认证期间新渲染的卡片不能永久保持禁用
     disableTrashButtons(merged);
 }
@@ -963,6 +972,72 @@ trashRefresh.addEventListener("click", function () {
 });
 
 // ============================================================
+// 账户资料用量（只读，仅服务器模式且已登录）：
+// serverApi.getUsage() 返回 {activeDrafts,trashedDrafts,versions,attachmentBytes}。
+// attachmentBytes 是全部已保存版本累计保留的附件字节数，不是磁盘占用或配额。
+// ============================================================
+
+let usageReadSeq = 0;
+
+function setUsageStatus(text, isError) {
+    usageStatus.textContent = text;
+    usageStatus.classList.toggle("status-error", Boolean(isError));
+}
+
+/** 需要重新登录时隐藏并清空用量区域；读序 +1 使晚到的响应作废 */
+function hideUsage() {
+    usageReadSeq += 1;
+    usageSection.hidden = true;
+    usageSummary.textContent = "";
+    usageUpdated.textContent = "";
+    usageStatus.textContent = "";
+    usageStatus.classList.remove("status-error");
+}
+
+/** 显示附件保存量；0 直接显示 "0 B"，非 0 按 1024 进位选最大不超过 GiB 的单位 */
+function formatUsageSize(bytes) {
+    const units = ["B", "KiB", "MiB", "GiB"];
+    let index = 0;
+    let value = bytes;
+    while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+    }
+    return (index === 0 ? value : value.toFixed(1)) + " " + units[index];
+}
+
+async function renderUsage() {
+    if (storageMode !== "server" || !accounts || !accounts.canWrite()) return;
+    const readEpoch = accountEpoch;
+    const readSeq = ++usageReadSeq;
+    // 先显示区域再发请求：首次 500 时重试入口也可见；失败保留上次统计
+    usageSection.hidden = false;
+    setUsageStatus("正在读取用量…");
+    let usage;
+    try {
+        usage = await serverApi.getUsage();
+    } catch (error) {
+        if (readEpoch !== accountEpoch || readSeq !== usageReadSeq) return;
+        if (error && (error.status === 401 || error.status === 403)) return;
+        setUsageStatus("读取用量失败：" + (error && error.message ? error.message : "本机服务出错") + "。已显示的上次统计保留，请稍后点“刷新用量”重试。", true);
+        return;
+    }
+    if (readEpoch !== accountEpoch || readSeq !== usageReadSeq) return;
+    usageSummary.textContent = "资料列表 " + usage.activeDrafts +
+        " 条；回收站资料 " + usage.trashedDrafts +
+        " 条；已保存版本 " + usage.versions +
+        " 个；附件保存量 " + formatUsageSize(usage.attachmentBytes) + "。";
+    usageUpdated.textContent = "更新时间：" + formatTime(Date.now());
+    setUsageStatus("用量已刷新。");
+}
+
+usageRefresh.addEventListener("click", function () {
+    if (storageMode !== "server" || !accounts || !accounts.canWrite()) return;
+    if (operationBusy) return;
+    renderUsage();
+});
+
+// ============================================================
 // 资料备份与恢复（仅服务器模式）：
 // - 导出：把一条资料的 .studio-backup 备份（全部已保存版本+附件）下载到本机；
 // - 恢复：把备份文件传给本机服务，生成一条全新的未发布草稿（新 id、全部历史），
@@ -1553,8 +1628,10 @@ function connectStorage() {
                         dbPromise = Promise.resolve({ kind: "server" });
                         await renderDrafts();
                         if (loginEpoch !== accountEpoch) return;
-                        // 登录成功后先列资料，再列回收站；回收站失败不影响上面
+                        // 登录成功后先列资料，再列回收站；随后读用量；失败不影响上面
                         await renderTrash();
+                        if (loginEpoch !== accountEpoch) return;
+                        await renderUsage();
                         if (loginEpoch !== accountEpoch) return;
                         if (!storageFailed) {
                             setStorageStatus("已登录：" + user.username);
@@ -1570,6 +1647,8 @@ function connectStorage() {
                         closeHistory();
                         // 回收站跟着隐藏清空；读序 +1 使晚到的列表响应作废
                         hideTrash();
+                        // 用量跟着隐藏清空；读序 +1 使晚到的统计响应作废
+                        hideUsage();
                         setStartupDisabled(true);
                         setStorageStatus("请先登录；未保存的表单仍保留。");
                     }
