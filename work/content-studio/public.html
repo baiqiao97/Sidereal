@@ -9,28 +9,36 @@
 </head>
 
 <body>
-    <h1>公共资料仓库</h1>
+    <h1 id="publicHeading">公共资料仓库</h1>
     <!-- 显眼说明：本页是本机只读预览，不暴露到互联网 -->
     <p class="public-intro">本机预览，尚未开放互联网；这里只展示手动发布的版本。发布者为分享账号，不代表原创作者。</p>
     <p id="publicAccountStatus" role="status" class="status-line"></p>
     <p class="status-line"><a id="publicLoginLink" class="public-link" href="/">前往工作台登录</a> <a id="publicDraftsLink" class="public-link" href="/">查看我的草稿</a></p>
     <p id="publicImportStatus" role="status" aria-live="polite" class="status-line"></p>
+    <!-- 复制链接专用状态行：提示链接始终指向当前已发布版本，且仅本机可访问 -->
+    <p id="publicLinkStatus" role="status" aria-live="polite" class="status-line"></p>
 
     <p>
         <a class="public-link" href="/">返回工作台</a>
+        <!-- 详情模式专用：从 /public?id=... 的详情页返回完整列表（列表模式保持隐藏） -->
+        <a id="publicReturnLink" class="public-link" href="/public" hidden>查看全部公共资料</a>
     </p>
+    <!-- 详情模式说明：链接永远反映当前已发布版本，撤回后不可用；仅本机可访问（列表模式保持隐藏） -->
+    <p id="publicDetailNote" class="public-intro" hidden>详情页显示的链接一直指向当前已发布的版本；如果发布者撤回发布，这里会显示“资料不可用”。此页面仅在本机可访问，不会暴露到互联网。</p>
 
-    <!-- 搜索/类型筛选只在已加载的列表里过滤，不追加请求 -->
+    <!-- 搜索/类型筛选只在已加载的列表里过滤，不追加请求；详情模式下仅隐藏 publicFilters（搜索/类型筛选）与 publicCount，刷新按钮保持在筛选区外始终可见 -->
     <div class="library-tools">
-        <label for="publicSearch">搜索标题、简介、文件名或发布者</label>
-        <input type="search" id="publicSearch" placeholder="例如：民法">
-        <label for="publicCategory">按类型筛选</label>
-        <select id="publicCategory">
-            <option value="">全部类型</option>
-            <option value="law">法律法规</option>
-            <option value="notes">笔记</option>
-            <option value="questions">题库</option>
-        </select>
+        <div id="publicFilters">
+            <label for="publicSearch">搜索标题、简介、文件名或发布者</label>
+            <input type="search" id="publicSearch" placeholder="例如：民法">
+            <label for="publicCategory">按类型筛选</label>
+            <select id="publicCategory">
+                <option value="">全部类型</option>
+                <option value="law">法律法规</option>
+                <option value="notes">笔记</option>
+                <option value="questions">题库</option>
+            </select>
+        </div>
         <button type="button" id="publicRefresh">刷新公共列表</button>
     </div>
 

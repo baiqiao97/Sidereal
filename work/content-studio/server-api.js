@@ -17,7 +17,7 @@ const serverApi = (function () {
     // 公共资料导入（保存到我的草稿）会创建私有草稿，也按私有请求处理
     function isPrivateRequest(url) {
         return url.indexOf("/api/drafts") === 0 ||
-            url.indexOf("/api/publications/") === 0 && url.indexOf("/import") !== -1;
+            /^\/api\/publications\/[^/]+\/import$/.test(url);
     }
 
     // 统一 fetch：为私有请求注入 X-Studio-User 头（内存中的当前用户 id）；
@@ -165,6 +165,12 @@ const serverApi = (function () {
         // 已发布快照列表；publishedAt 保留服务器原样（ISO 字符串），由 public.js 自己 new Date 展示
         listPublications: function () {
             return request("/api/publications", { method: "GET" });
+        },
+
+        // 单条已发布快照详情：公开只读复用上面的 request，不走私有请求（无登录头/登录事件）；
+        // 编号 encodeURIComponent；错误统一由 request 抛出并保留 HTTP 状态（404 已撤回/不存在、400 编号无效）
+        getPublication: function (id) {
+            return request("/api/publications/" + encodeURIComponent(id), { method: "GET" });
         },
 
         // 发布：expectedVersion 传卡片上当前看到的草稿 revision；版本过期 409，成功返回完整新草稿 DTO
