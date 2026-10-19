@@ -366,6 +366,17 @@ async function handleApi(request, response, pathname) {
         if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
         return sendJson(response, 200, store.listPublications());
     }
+    match = pathname.match(/^\/api\/publishers\/([^/]+)\/publications$/);
+    if (match) {
+        if (method !== 'GET') throw fail(405, 'Method not allowed', 'GET');
+        let username;
+        try {
+            username = decodeURIComponent(match[1]);
+        } catch {
+            throw fail(400, '发布者用户名格式不正确');
+        }
+        return sendJson(response, 200, store.listPublications(username));
+    }
     // 匿名单条公开查询：无需登录或 X-Studio-User；校验 id 格式后查当前公开快照
     match = pathname.match(/^\/api\/publications\/([^/]+)$/);
     if (match) {

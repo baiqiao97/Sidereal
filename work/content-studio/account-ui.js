@@ -17,7 +17,7 @@
       'recoveryCodeForm', 'recoveryCurrentPassword', 'generateRecoveryCodeButton',
       'recoveryCodeOutput', 'generatedRecoveryCode', 'hideRecoveryCodeButton',
       'resetPasswordPanel', 'resetPasswordForm', 'resetUsername', 'resetCode',
-      'resetNewPassword', 'resetConfirmPassword', 'resetPasswordButton'];
+      'resetNewPassword', 'resetConfirmPassword', 'resetPasswordButton', 'ownPublicProfileLink'];
     const nodes = {};
     for (let i = 0; i < ids.length; i++) {
       const node = document.getElementById(ids[i]);
@@ -92,6 +92,10 @@
       nodes.logoutButton.disabled = busyNow;
       nodes.authToggle.hidden = Boolean(user) || mode === 'setup';
       nodes.authToggle.disabled = busyNow || mode === 'setup';
+      nodes.ownPublicProfileLink.hidden = !user;
+      if (user) {
+        nodes.ownPublicProfileLink.href = '/public?publisher=' + encodeURIComponent(user.username);
+      }
       nodes.authPassword.autocomplete = (user || mode === 'login') ? 'current-password' : 'new-password';
       // 修改密码表单：仅登录后显示；忙碌或未登录时禁用输入
       nodes.passwordForm.hidden = !user;

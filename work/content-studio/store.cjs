@@ -76,7 +76,9 @@ function createStore(dbPath) {
         // 只读已发布版本本身的元数据；用 JOIN 保证列表不含草稿当前内容、历史版本或 BLOB。
         // 列表与单条查询共用同一 SELECT 串：列表只补 ORDER BY，单条只补 WHERE
         publishedList: db.prepare(PUBLISHED_SELECT + ' ORDER BY p.publishedAt DESC, p.draftId'),
-        publishedSingle: db.prepare(PUBLISHED_SELECT + ' WHERE p.draftId = ?')
+        publishedSingle: db.prepare(PUBLISHED_SELECT + ' WHERE p.draftId = ?'),
+        // 按发布者用户名过滤公开列表：复用同一 SELECT，仅追加 WHERE/ORDER BY
+        publishedByName: db.prepare(PUBLISHED_SELECT + " WHERE u.username = ? ORDER BY p.publishedAt DESC, p.draftId")
     };
 
     function runTransaction(action) {
@@ -320,9 +322,13 @@ function createStore(dbPath) {
         };
     }
 
-    // 公开列表：最近发布在前
-    function listPublications() {
-        return statements.publishedList.all().map(mapPublication);
+    // 公开列表：最近发布在前；可选按发布者用户名过滤（账户不存在或无发布同样返回 []）
+    function listPublications(publisher) {
+        if (publisher === undefined) return statements.publishedList.all().map(mapPublication);
+        if (typeof publisher !== 'string') throw fail(400, '发布者用户名格式不正确');
+        const name = publisher.trim().toLowerCase();
+        if (!/^[a-z0-9_-]{3,32}$/.test(name)) throw fail(400, '发布者用户名格式不正确');
+        return statements.publishedByName.all(name).map(mapPublication);
     }
 
     // 匿名单条公开查询：仅按 publications 当前快照取一行；缺失/未发布返回 null，绝无写操作

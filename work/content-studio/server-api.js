@@ -181,9 +181,12 @@ const serverApi = (function () {
 
         // ---- 公共仓库（已发布快照）适配；复用上面的 request/normalizeDraft，不影响旧接口 ----
 
-        // 已发布快照列表；publishedAt 保留服务器原样（ISO 字符串），由 public.js 自己 new Date 展示
-        listPublications: function () {
-            return request("/api/publications", { method: "GET" });
+        // 已发布快照列表；不传 publisher 时返回全量；传用户名时返回该发布者的公开快照
+        // （子路径 encodeURIComponent，保持公共只读，不带身份头/登录事件）
+        listPublications: function (publisher) {
+            if (publisher === undefined) return request("/api/publications", { method: "GET" });
+            const url = "/api/publishers/" + encodeURIComponent(publisher) + "/publications";
+            return request(url, { method: "GET" });
         },
 
         // 单条已发布快照详情：公开只读复用上面的 request，不走私有请求（无登录头/登录事件）；
