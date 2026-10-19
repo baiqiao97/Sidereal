@@ -1,7 +1,9 @@
 // ============================================================
-// public.js：公共资料仓库只读预览。同一页面承载两种模式：
-// /public 显示全部公共列表；/public?id=编号 显示单条资料详情。
-// 只调用公开接口 /api/publications、/api/publications/编号 与公共附件下载地址；
+// public.js：公共资料仓库只读预览。同一页面承载三种模式：
+// /public 显示全部公共列表；/public?id=编号 显示单条资料详情；
+// /public?publisher=用户名 显示该发布者的公开主页（只调用按发布者过滤的公开接口）。
+// 只调用公开接口 /api/publications、/api/publishers/:name/publications、
+// /api/publications/编号 与公共附件下载地址；
 // 不创建/读取 IndexedDB 或 localStorage，不访问任何草稿接口，
 // 不上传内容、不解析执行附件。
 // 登录状态仅用于“保存到我的草稿”按钮：读取 /api/auth/me 失败
@@ -27,6 +29,7 @@
     const returnLink = document.getElementById("publicReturnLink");
     const detailNote = document.getElementById("publicDetailNote");
     const linkStatus = document.getElementById("publicLinkStatus");
+    const copyProfileButton = document.getElementById("publicCopyProfileLink");
 
     // 模式判定：URL 带 id 参数（哪怕值为空）即详情模式；
     // 详情编号只允许 [A-Za-z0-9_-]{1,100}，为空/无效按“资料不可用”处理并直接拒绝请求，
@@ -38,6 +41,23 @@
     const detailId = rawDetailId !== null && DETAIL_ID_PATTERN.test(rawDetailId) ? rawDetailId : null;
     const isDetail = hasIdParam;
     const detailInvalid = hasIdParam && detailId === null;
+
+    // 发布者主页模式：/public?publisher=用户名 显示该发布者的公开主页。
+    // 用户名规范化（去首尾空白后转小写）并校验 /^[a-z0-9_-]{3,32}$/；
+    // 出现多个 publisher 参数、publisher 与 id 并存、或用户名缺失/无效时，
+    // 直接清空卡片并显示可读的无效链接提示，跳过所有公共资料请求
+    // （绝不回退成完整列表或详情；登录检查仍可独立进行）。
+    const PUBLISHER_PATTERN = /^[a-z0-9_-]{3,32}$/;
+    const rawPublisherParams = urlParams.getAll("publisher");
+    const hasPublisherParam = rawPublisherParams.length > 0;
+    const publisherIdConflict = hasPublisherParam && hasIdParam;
+    const publisherName = rawPublisherParams.length === 1
+        ? String(rawPublisherParams[0] == null ? "" : rawPublisherParams[0]).trim().toLowerCase()
+        : null;
+    const publisherProfileValid = rawPublisherParams.length === 1 && !publisherIdConflict &&
+        publisherName !== null && PUBLISHER_PATTERN.test(publisherName);
+    const isPublisherProfile = hasPublisherParam;
+    const publisherProfileInvalid = hasPublisherParam && !publisherProfileValid;
 
     // 已成功加载的公共快照数组；加载失败时保留上一次成功的数据，绝不假装仓库为空；
     // 首次成功前为 null。详情模式始终只含一条（复用 render/卡片/导入逻辑）。
@@ -151,10 +171,23 @@
         categoryLine.textContent = "类型：" + (CATEGORY_TEXT[pub.category] || pub.category);
         card.appendChild(categoryLine);
 
-        // 发布者=当前分享账号的用户名；旧数据未认领时显示占位文案
+        // 发布者=当前分享账号的用户名；旧数据未认领时显示占位文案。
+        // 用户名匹配安全格式时把名字渲染成主页链接（textContent 填充，不会被解析执行），
+        // 其余情况保持纯文本，“发布者：”前缀与 public-publisher 类名不变
         const publisherLine = document.createElement("p");
         publisherLine.className = "public-publisher";
-        publisherLine.textContent = "发布者：" + (pub.publisher || "未认领资料");
+        publisherLine.textContent = "发布者：";
+        const publisherText = pub.publisher ? String(pub.publisher) : "";
+        const lowerPublisher = publisherText.toLowerCase();
+        if (PUBLISHER_PATTERN.test(lowerPublisher)) {
+            const publisherLink = document.createElement("a");
+            publisherLink.className = "public-link public-publisher-link";
+            publisherLink.href = "/public?publisher=" + encodeURIComponent(lowerPublisher);
+            publisherLink.textContent = lowerPublisher;
+            publisherLine.appendChild(publisherLink);
+        } else {
+            publisherLine.appendChild(document.createTextNode(publisherText || "未认领资料"));
+        }
         card.appendChild(publisherLine);
 
         const descriptionLine = document.createElement("p");
@@ -241,6 +274,9 @@
 
         if (isDetail) {
             countLine.hidden = true;
+        } else if (isPublisherProfile) {
+            countLine.textContent = "该发布者共 " + publications.length +
+                " 份公开资料，当前显示 " + visible.length + " 份。";
         } else {
             countLine.textContent = "公共仓库共 " + publications.length +
                 " 份资料，当前显示 " + visible.length + " 份。";
@@ -250,8 +286,9 @@
         if (visible.length === 0) {
             const empty = document.createElement("p");
             empty.className = "empty-hint";
+            // 列表为空与被筛选为空给出不同提示；其余情况沿用统一筛选提示文案
             empty.textContent = publications.length === 0
-                ? "公共仓库还没有发布任何资料。"
+                ? (isPublisherProfile ? "该主页暂无公开资料。" : "公共仓库还没有发布任何资料。")
                 : "没有符合当前搜索/筛选条件的资料，试试换关键词或类型。";
             listElement.appendChild(empty);
             return;
@@ -308,6 +345,28 @@
         }
     }
 
+    // 复制主页链接：规范化绝对地址 = location.origin + "/public?publisher=" + 用户名（编码），
+    // 只带规范化后的用户名，不带任何额外参数/哈希。只操作剪贴板，
+    // 不导入/保存/修改任何数据，页面加载时绝不自动触发。
+    // 剪贴板写入被拒绝或不可用时，退回 window.prompt 手动复制；
+    // prompt 本身加 try/catch，任何失败都不会产生未处理的 Promise 拒绝。
+    async function handleCopyProfileLink() {
+        if (!publisherProfileValid) return;
+        const url = window.location.origin + "/public?publisher=" + encodeURIComponent(publisherName);
+        setLinkStatus("正在复制主页链接…", false);
+        try {
+            await navigator.clipboard.writeText(url);
+            setLinkStatus("主页链接已复制；可访问范围取决于当前站点地址。", false);
+        } catch (error) {
+            setLinkStatus("自动复制未完成，请手动复制主页链接；可访问范围取决于当前站点地址。", true);
+            try {
+                window.prompt("请复制此主页链接：", url);
+            } catch (promptError) {
+                return;
+            }
+        }
+    }
+
     // 详情模式下的“不可用”渲染：清空旧卡片与旧数据，留下可读说明，
     // 返回列表链接与刷新按钮保持在页面上可用；绝不显示已撤回资料的旧内容
     function clearDetail(message) {
@@ -330,11 +389,28 @@
         refreshButton.disabled = true;
         disableImportButtons(true);
         setImportStatus("", false);
+        // 发布者主页模式：用户名无效/缺失/重复或与资料编号并存时不发任何请求，
+        // 直接显示无效链接提示；有效时只调用按发布者过滤的接口，绝不回退成完整列表
+        if (publisherProfileInvalid) {
+            setStatus("该公开主页链接无效：用户名缺失、格式不正确，或主页地址里同时出现了资料编号与用户名。" +
+                "没有发起任何公共资料请求；可点“查看全部公共资料”返回公开列表。", true);
+            // 清空旧卡片与旧数据（含计数行文案），显示可读的无效链接提示
+            if (countLine) countLine.textContent = "";
+            clearDetail("这个公开主页的链接无效：主页地址中的用户名缺失或不符合格式，" +
+                "也可能与资料详情编号同时出现。可点“查看全部公共资料”返回公开列表重新选择。");
+            refreshing = false;
+            refreshButton.disabled = false;
+            return;
+        }
         // 详情模式（含编号为空/无效）：只走详情加载，绝不回退成完整列表；
         // 编号无效时 loadDetail 直接显示不可用提示，不发任何请求
-        setStatus(hasIdParam ? "正在加载公共资料详情…" : "正在从本机服务加载公共列表…");
+        setStatus(isPublisherProfile
+            ? "正在从本机服务加载该发布者的公开主页…"
+            : (hasIdParam ? "正在加载公共资料详情…" : "正在从本机服务加载公共列表…"));
         try {
-            await Promise.all([checkAuth(), hasIdParam ? loadDetail() : loadPublications()]);
+            await Promise.all([checkAuth(), isPublisherProfile
+                ? loadPublications(publisherName)
+                : (hasIdParam ? loadDetail() : loadPublications())]);
         } finally {
             refreshing = false;
             refreshButton.disabled = false;
@@ -342,16 +418,25 @@
         }
     }
 
-    async function loadPublications() {
+    async function loadPublications(publisher) {
         try {
-            const items = await serverApi.listPublications();
+            // 发布者主页模式传用户名调用按发布者过滤的接口；不传参数时
+            // serverApi.listPublications(undefined) 即完整列表，两者不混用
+            const items = await serverApi.listPublications(publisher);
             publications = Array.isArray(items) ? items : [];
             render();
-            setStatus("公共列表已更新，共 " + publications.length + " 份资料。");
+            setStatus(publisher
+                ? "该发布者的公开主页已更新，共 " + publications.length + " 份公开资料。"
+                : "公共列表已更新，共 " + publications.length + " 份资料。");
         } catch (error) {
-            setStatus("加载公共列表失败：" +
-                (error && error.message ? error.message : "本机服务不可用") +
-                "。当前显示的列表已保留，未当作空仓库；请确认本机服务已启动后再点“刷新公共列表”。", true);
+            // 失败时保留上一次成功加载的列表；刷新成功且为空时才会清空撤回的资料
+            setStatus(publisher
+                ? "加载该发布者的公开主页失败：" +
+                    (error && error.message ? error.message : "本机服务不可用") +
+                    "。当前显示的主页内容已保留，未当作空主页；请确认本机服务已启动后再点“刷新主页”。"
+                : "加载公共列表失败：" +
+                    (error && error.message ? error.message : "本机服务不可用") +
+                    "。当前显示的列表已保留，未当作空仓库；请确认本机服务已启动后再点“刷新公共列表”。", true);
         }
     }
 
@@ -411,7 +496,7 @@
 
     // 详情模式的静态界面调整（只做一次）：标题、隐藏筛选与计数、刷新文案、
     // 返回链接与详情说明；列表模式保持原有外观与行为不变
-    if (hasIdParam) {
+    if (hasIdParam && !isPublisherProfile) {
         document.title = "公共资料详情";
         if (headingElement) headingElement.textContent = "公共资料详情";
         if (filtersElement) filtersElement.hidden = true;
@@ -419,6 +504,21 @@
         refreshButton.textContent = "刷新资料";
         if (returnLink) returnLink.hidden = false;
         if (detailNote) detailNote.hidden = false;
+    }
+
+    // 发布者主页模式的静态界面调整（只做一次）：标题/文档标题、刷新文案、
+    // 返回全部列表链接、主页链接复制按钮。
+    // 无效用户名不进入标题，避免出现“null 的公开主页”；复制按钮只在有效主页显示
+    if (isPublisherProfile) {
+        const profileHeading = publisherProfileValid ? publisherName + " 的公开主页" : "公开主页";
+        document.title = profileHeading;
+        if (headingElement) headingElement.textContent = profileHeading;
+        refreshButton.textContent = "刷新主页";
+        if (returnLink) returnLink.hidden = false;
+        if (copyProfileButton) {
+            copyProfileButton.hidden = !publisherProfileValid;
+            copyProfileButton.addEventListener("click", handleCopyProfileLink);
+        }
     }
 
     // 打开页面：登录检查与公开读取并行、互不阻塞；匿名浏览/下载保持可用

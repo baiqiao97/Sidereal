@@ -22,6 +22,8 @@
         <a class="public-link" href="/">返回工作台</a>
         <!-- 详情模式专用：从 /public?id=... 的详情页返回完整列表（列表模式保持隐藏） -->
         <a id="publicReturnLink" class="public-link" href="/public" hidden>查看全部公共资料</a>
+        <!-- 发布者主页模式专用：复制本页主页链接（仅有效主页地址显示） -->
+        <button type="button" id="publicCopyProfileLink" hidden>复制主页链接</button>
     </p>
     <!-- 详情模式说明：链接永远反映当前已发布版本，撤回后不可用；仅本机可访问（列表模式保持隐藏） -->
     <p id="publicDetailNote" class="public-intro" hidden>详情页显示的链接一直指向当前已发布的版本；如果发布者撤回发布，这里会显示“资料不可用”。此页面仅在本机可访问，不会暴露到互联网。</p>
