@@ -10,16 +10,21 @@ const serverApi = (function () {
 
     // 当前用户 id，仅保存在内存中；由 app 在登录/登出后调用 setUser 维护
     let currentUserId = null;
+    // 身份纪元：每次 setUser（即使同一用户）都递增；防止被吊销旧会话的迟到
+    // 401/403 把刚刚重新登录的“同一账号”也误登出
+    let identityEpoch = 0;
 
     function draftUrl(id) {
         return "/api/drafts/" + encodeURIComponent(id);
     }
 
     // 私有请求：/api/drafts 需要 X-Studio-User，401/403 派发登录提醒；
+    // 修改密码需要当前会话身份，也按私有请求处理（登录/注册保持公共）；
     // 公共资料导入（保存到我的草稿）会创建私有草稿，也按私有请求处理；
     // 备份恢复会创建新的私有草稿（精确匹配该地址），同样带身份并遵守迟到账号守卫
     function isPrivateRequest(url) {
         return url.indexOf("/api/drafts") === 0 ||
+            url === "/api/auth/password" ||
             /^\/api\/publications\/[^/]+\/import$/.test(url) ||
             url === "/api/backups/restore";
     }
@@ -28,6 +33,7 @@ const serverApi = (function () {
     // 仅当私有请求返回 401/403 时派发私有登录提醒事件；网络失败抛可读 Error
     async function checkedFetch(url, options) {
         const requestUserId = currentUserId;
+        const requestEpoch = identityEpoch;
         const merged = options ? Object.assign({}, options) : {};
         if (currentUserId && isPrivateRequest(url)) {
             const headers = new Headers(merged.headers || {});
@@ -40,7 +46,10 @@ const serverApi = (function () {
         } catch (error) {
             throw new Error("无法连接本机保存服务，请确认服务已启动后重试");
         }
-        if ((response.status === 401 || response.status === 403) && isPrivateRequest(url) && currentUserId === requestUserId) {
+        // 仅当用户id与纪元均未变化（未被新的 setUser 更替）时才派发登录提醒；
+        // 防止迟到的旧会话 401/403 登出刚刚重新登录的同一账号
+        if ((response.status === 401 || response.status === 403) && isPrivateRequest(url) &&
+            currentUserId === requestUserId && identityEpoch === requestEpoch) {
             window.dispatchEvent(new Event("studio-auth-required"));
         }
         return response;
@@ -244,9 +253,11 @@ const serverApi = (function () {
 
         // ---- 认证适配：适配层不做表单验证、不自行 setUser、不保存密码/token ----
 
-        // app 在登录/注册/登出成功后调用；只在内存中保存用户 id
+        // app 在登录/注册/登出成功后调用；只在内存中保存用户 id；
+        // 即使同一用户也递增纪元，使旧会话的迟到 401/403 失效
         setUser: function (user) {
             currentUserId = user && user.id != null ? String(user.id) : null;
+            identityEpoch++;
         },
 
         // 成功返回 {user:{id,username} 或 null, needsSetup, legacyDraftCount}
@@ -283,6 +294,16 @@ const serverApi = (function () {
 
         authLogout: function () {
             return request("/api/auth/logout", { method: "POST" });
+        },
+
+        // 修改密码：成功 200 {changed:true}，服务端吊销该用户全部会话并清 cookie；
+        // 当前密码错误 400 抛错（保持登录）；会话失效 401/403 走统一登录提醒
+        authChangePassword: function (currentPassword, newPassword) {
+            return request("/api/auth/password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
+            });
         }
     };
 })();

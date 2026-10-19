@@ -55,6 +55,29 @@
                 <button type="button" id="authToggle">注册新账户</button>
             </p>
         </form>
+        <!-- 修改密码：与登录表单平级（不嵌套表单）；仅登录后的server模式由JS显示 -->
+        <form id="passwordForm" hidden>
+            <h3>修改密码</h3>
+            <p>
+                <label for="currentPassword">当前密码（12~128字符）</label>
+                <input type="password" id="currentPassword" name="currentPassword" required minlength="12"
+                    maxlength="128" autocomplete="current-password">
+            </p>
+            <p>
+                <label for="newPassword">新密码（12~128字符）</label>
+                <input type="password" id="newPassword" name="newPassword" required minlength="12" maxlength="128"
+                    autocomplete="new-password">
+            </p>
+            <p>
+                <label for="confirmPassword">确认新密码（12~128字符）</label>
+                <input type="password" id="confirmPassword" name="confirmPassword" required minlength="12"
+                    maxlength="128" autocomplete="new-password">
+            </p>
+            <p class="password-note">修改成功后所有设备需重新登录，未保存的资料表单保留</p>
+            <p>
+                <button type="submit" id="changePasswordButton">修改密码</button>
+            </p>
+        </form>
         <!-- 登录/注册/退出失败提示：必须放 authForm 外，退出失败时表单可能已隐藏 -->
         <p id="authError" class="draft-error" role="alert" aria-live="assertive" hidden></p>
         <p>
