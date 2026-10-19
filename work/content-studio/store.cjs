@@ -70,7 +70,7 @@ function createStore(dbPath) {
         // 直接在 SQL 内复制版本行，避免把大附件读进 JS 再写回
         copyVersion: db.prepare('INSERT INTO versions (draftId, version, savedAt, title, description, category, fileName, fileType, fileData) SELECT ?, 1, ?, title, description, category, fileName, fileType, fileData FROM versions WHERE draftId = ? AND version = ?'),
         // 只读已发布版本本身的元数据；用 JOIN 保证列表不含草稿当前内容、历史版本或 BLOB
-        publishedList: db.prepare('SELECT p.draftId AS id, p.version, p.publishedAt, v.title, v.description, v.category, v.fileName, v.fileType, LENGTH(v.fileData) AS fileSize FROM publications p JOIN versions v ON v.draftId = p.draftId AND v.version = p.version ORDER BY p.publishedAt DESC, p.draftId')
+        publishedList: db.prepare('SELECT p.draftId AS id, p.version, p.publishedAt, v.title, v.description, v.category, v.fileName, v.fileType, LENGTH(v.fileData) AS fileSize, u.username AS publisher FROM publications p JOIN versions v ON v.draftId = p.draftId AND v.version = p.version LEFT JOIN draft_owners o ON o.draftId = p.draftId LEFT JOIN users u ON u.id = o.userId ORDER BY p.publishedAt DESC, p.draftId')
     };
 
     function runTransaction(action) {
@@ -309,6 +309,7 @@ function createStore(dbPath) {
             title: row.title,
             description: row.description,
             category: row.category,
+            publisher: row.publisher || null,
             file: row.fileSize != null ? { name: row.fileName, type: row.fileType, size: row.fileSize, url: '/api/publications/' + row.id + '/file' } : null
         }));
     }

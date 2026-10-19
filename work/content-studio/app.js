@@ -683,7 +683,7 @@ async function publishDraft(draft) {
             : "当前已保存的版本";
         const confirmed = window.confirm(
             "确定把“" + draft.title + "”发布到公共仓库吗？只发布列表里" + versionNote +
-            "这一版；表单里未保存的修改不会被发布。"
+            "这一版；表单里未保存的修改不会被发布。发布时会展示你的用户名。"
         );
         if (!confirmed) return;
         hideError();

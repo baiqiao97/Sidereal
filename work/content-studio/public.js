@@ -58,7 +58,8 @@
         const haystack = [
             pub.title,
             pub.description || "",
-            pub.file ? pub.file.name : ""
+            pub.file ? pub.file.name : "",
+            pub.publisher || ""
         ].join("\n").toLowerCase();
         return haystack.indexOf(keyword) !== -1;
     }
@@ -125,6 +126,12 @@
         const categoryLine = document.createElement("p");
         categoryLine.textContent = "类型：" + (CATEGORY_TEXT[pub.category] || pub.category);
         card.appendChild(categoryLine);
+
+        // 发布者=当前分享账号的用户名；旧数据未认领时显示占位文案
+        const publisherLine = document.createElement("p");
+        publisherLine.className = "public-publisher";
+        publisherLine.textContent = "发布者：" + (pub.publisher || "未认领资料");
+        card.appendChild(publisherLine);
 
         const descriptionLine = document.createElement("p");
         descriptionLine.className = "draft-description";

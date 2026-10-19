@@ -104,12 +104,17 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
 
   await t.test('legacy data requires explicit first-account claim', async () => {
     assert.deepEqual(await expect(anon, '/api/auth/me', 'GET', undefined, 200), { user: null, needsSetup: true, legacyDraftCount: 1 });
+    const unclaimed = await expect(anon, '/api/publications', 'GET', undefined, 200);
+    assert.equal(unclaimed.length, 1);
+    assert.equal(unclaimed[0].publisher, null);
+    assert.deepEqual(Object.keys(unclaimed[0]).sort(), ['category', 'description', 'file', 'id', 'publishedAt', 'publisher', 'title', 'version']);
     await expect(anon, '/api/drafts', 'GET', undefined, 401);
     await expect(anon, '/api/auth/register', 'POST', { username: 'early_user', password }, 409);
     await expect(anon, '/api/auth/setup', 'POST', { username: 'owner_a', password, claimLegacy: false }, 400);
     const setup = await a.request('/api/auth/setup', 'POST', { username: 'Owner_A', password, claimLegacy: true });
     assert.equal(setup.status, 201);
     assert.equal(a.user.username, 'owner_a');
+    assert.equal((await expect(anon, '/api/publications', 'GET', undefined, 200))[0].publisher, 'owner_a');
     assert.match(setup.cookie, /HttpOnly; SameSite=Strict; Path=\//);
     assert.match(setup.cookie, /Max-Age=604800/);
     assert.equal((await expect(a, '/api/drafts', 'GET', undefined, 200)).length, 1);
@@ -133,6 +138,7 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
     await expect(a, '/api/drafts/legacy', 'PUT', form('Private revision two', 1, changed), 200);
     await expect(a, '/api/drafts/legacy', 'PUT', form('stale writer', 1), 409);
     assert.equal((await expect(anon, '/api/publications', 'GET', undefined, 200))[0].title, 'Legacy title');
+    assert.equal((await expect(anon, '/api/publications', 'GET', undefined, 200))[0].publisher, 'owner_a');
     await expect(anon, '/api/publications/legacy/import', 'POST', { expectedPublishedVersion: 1 }, 401);
     await expect(b, '/api/publications/legacy/import', 'POST', { expectedPublishedVersion: 2 }, 409);
     copied = await expect(b, '/api/publications/legacy/import', 'POST', { expectedPublishedVersion: 1, userId: a.user.id }, 201);
@@ -153,6 +159,9 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
 
   await t.test('failed copies roll back draft, ownership and version together', async () => {
     await expect(b, '/api/drafts/' + copied.id + '/publication', 'PUT', { expectedVersion: 1 }, 200);
+    const republished = await expect(anon, '/api/publications', 'GET', undefined, 200);
+    assert.equal(republished.length, 1);
+    assert.equal(republished[0].publisher, 'owner_b', 'publisher is the sharing account, not the original creator');
     const inspect = new DatabaseSync(dbPath);
     try {
       const before = inspect.prepare('SELECT COUNT(*) AS n FROM drafts').get().n;
@@ -184,6 +193,7 @@ test('Content Studio: local accounts, versions and public copies', { timeout: 60
     await stop();
     await start();
     assert.equal((await expect(a, '/api/auth/me', 'GET', undefined, 200)).user.id, a.user.id);
+    assert.equal((await expect(anon, '/api/publications', 'GET', undefined, 200))[0].publisher, 'owner_b');
     assert.deepEqual(await expect(b, copied.file.url, 'GET', undefined, 200), original);
     await expect(a, '/api/auth/logout', 'POST', undefined, 204);
     await expect(a, '/api/drafts', 'GET', undefined, 401);
