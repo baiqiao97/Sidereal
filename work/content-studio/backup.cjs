@@ -53,6 +53,14 @@ function validateVersion(v, expected) {
   if (typeof v.title !== 'string' || v.title.trim() === '') throw fail(400, 'invalid title');
   if (v.description !== null && typeof v.description !== 'string') throw fail(400, 'invalid description');
   if (!CATEGORIES.has(v.category)) throw fail(400, 'invalid category');
+  // Best-effort JS guard only: node:sqlite truncates TEXT at the first U+0000, so a planted
+  // NUL is usually invisible here. The authoritative rejection is the SQL precheck
+  // (INSTR(col, CHAR(0))) before these strings ever reach JavaScript.
+  for (const field of ['title', 'description', 'fileName', 'fileType']) {
+    if (typeof v[field] === 'string' && v[field].includes('\u0000')) {
+      throw fail(400, 'metadata contains NUL characters');
+    }
+  }
   const kind = v.fileKind !== undefined ? v.fileKind : (v.fileData == null ? 'null' : 'blob');
   const size = v.fileData != null ? v.fileData.length : v.fileSize;
   if (v.fileName === null) {
@@ -78,13 +86,29 @@ function writeDraftBackup(db, id, filePath) {
     db.exec('BEGIN'); // read snapshot: counts/checks see the same rows the copy reads
     srcTxn = true;
 
-    const draft = db.prepare('SELECT createdAt, currentVersion FROM drafts WHERE id = ?').get(id);
-    if (!draft) throw fail(404, 'draft not found');
+    let draft;
+    // Scalars only first: 404/length/NUL gates run before the (possibly truncated)
+    // createdAt TEXT is ever read into JS.
+    const gates = db.prepare(
+      `SELECT currentVersion, LENGTH(createdAt) AS createdAtLen,
+              (createdAt IS NOT NULL AND INSTR(createdAt, CHAR(0))) AS createdAtNul
+         FROM drafts WHERE id = ?`
+    ).get(id);
+    if (!gates) throw fail(404, 'draft not found');
+    if (!Number.isInteger(gates.createdAtLen) || gates.createdAtLen > 32 || gates.createdAtNul) throw fail(400, 'invalid draft createdAt');
+    draft = { currentVersion: gates.currentVersion, createdAt: db.prepare('SELECT createdAt FROM drafts WHERE id = ?').get(id).createdAt };
     if (!validIsoDate(draft.createdAt)) throw fail(400, 'invalid draft createdAt');
     const n = draft.currentVersion;
     if (!Number.isInteger(n) || n < 1 || n > MAX_VERSIONS) throw fail(400, 'invalid currentVersion');
 
     // SQL bounds precheck: reject oversized text/blob fields BEFORE transferring any row.
+    // SQLite LENGTH(TEXT) stops at the first U+0000, so a NUL character can hide oversized
+    // text behind a tiny reported length. NUL detection uses the encoding-independent
+    // INSTR(col, CHAR(0)) U+0000 probe (identical results on UTF-8/UTF-16LE/UTF-16BE files;
+    // attachment BLOBs are never scanned for NULs because arbitrary 00 bytes are legal).
+    const nulExpr = (col, nullAs) => nullAs
+      ? `CASE WHEN ${col} IS NULL THEN 0 ELSE INSTR(${col}, CHAR(0)) END`
+      : `INSTR(${col}, CHAR(0))`;
     const b = db.prepare(
       `SELECT COUNT(*) AS cnt, COALESCE(MIN(version), 0) AS minV, COALESCE(MAX(version), 0) AS maxV,
               COALESCE(MAX(LENGTH(title)), 0) AS titleMax,
@@ -94,12 +118,21 @@ function writeDraftBackup(db, id, filePath) {
               COALESCE(MAX(LENGTH(savedAt)), 0) AS savedAtMax,
               COALESCE(MAX(LENGTH(category)), 0) AS categoryMax,
               COALESCE(MAX(CASE WHEN fileData IS NULL THEN 0 ELSE LENGTH(fileData) END), 0) AS blobMax,
+              COALESCE(MAX(${nulExpr('title')}), 0) AS nulTitle,
+              COALESCE(MAX(${nulExpr('description', true)}), 0) AS nulDesc,
+              COALESCE(MAX(${nulExpr('savedAt')}), 0) AS nulSaved,
+              COALESCE(MAX(${nulExpr('category')}), 0) AS nulCategory,
+              COALESCE(MAX(${nulExpr('fileName', true)}), 0) AS nulName,
+              COALESCE(MAX(${nulExpr('fileType', true)}), 0) AS nulType,
               COALESCE(SUM(LENGTH(title) + LENGTH(COALESCE(description, '')) + LENGTH(savedAt) + LENGTH(category) +
                            LENGTH(COALESCE(fileName, '')) + LENGTH(COALESCE(fileType, ''))), 0) AS metaSum
          FROM versions WHERE draftId = ?`
     ).get(id);
     if (b.cnt !== n) throw fail(400, 'version count mismatch');
     if (b.minV !== 1 || b.maxV !== n) throw fail(400, 'versions not sequential');
+    if (b.nulTitle || b.nulDesc || b.nulSaved || b.nulCategory || b.nulName || b.nulType) {
+      throw fail(400, 'metadata contains NUL characters');
+    }
     if (b.titleMax > MAX_TITLE_LEN || b.descMax > MAX_DESCRIPTION_LEN) throw fail(413, 'draft text too large');
     if (b.savedAtMax > 32 || b.categoryMax > 16) throw fail(413, 'draft text too large');
     if (b.nameMax > MAX_FILE_NAME_LEN || b.typeMax > MAX_FILE_TYPE_LEN) throw fail(413, 'file metadata too large');
@@ -208,12 +241,17 @@ function restoreDraftBackup(db, filePath, userId) {
 
   try {
     let rows;
-    try { rows = source.prepare("SELECT type, name, LENGTH(sql) AS sqlLength FROM sqlite_schema WHERE name IN ('backup_info','versions')").all(); } catch { throw fail(400, BAD_BACKUP); }
+    // NUL / length gates on the raw schema SQL run before the full TEXT reaches JS:
+    // a writable_schema-planted suffix ('...' || X'00' || long tail) keeps LENGTH(sql) below
+    // the cap while node:sqlite silently truncates the value JS reads, so INSTR(sql, CHAR(0))
+    // (encoding-independent) is the only reliable rejection point.
+    try { rows = source.prepare("SELECT type, name, LENGTH(sql) AS sqlLength, INSTR(sql, CHAR(0)) AS nulSql FROM sqlite_schema WHERE name IN ('backup_info','versions')").all(); } catch { throw fail(400, BAD_BACKUP); }
     if (rows.length !== 2) throw fail(400, BAD_BACKUP);
     for (const r of rows) {
       if (r.type !== 'table') throw fail(400, BAD_BACKUP);
       if (r.name !== 'backup_info' && r.name !== 'versions') throw fail(400, BAD_BACKUP);
       if (!Number.isInteger(r.sqlLength) || r.sqlLength > 4096) throw fail(400, BAD_BACKUP);
+      if (r.nulSql) throw fail(400, BAD_BACKUP);
     }
     rows = source.prepare("SELECT type, name, sql FROM sqlite_schema WHERE name IN ('backup_info','versions')").all();
     for (const r of rows) {
@@ -231,10 +269,12 @@ function restoreDraftBackup(db, filePath, userId) {
 
     let infoBounds;
     try {
-      infoBounds = source.prepare('SELECT COUNT(*) AS c, MAX(LENGTH(format)) AS fmtMax, MAX(LENGTH(createdAt)) AS createdMax FROM backup_info').get();
+      infoBounds = source.prepare('SELECT COUNT(*) AS c, MAX(LENGTH(format)) AS fmtMax, MAX(LENGTH(createdAt)) AS createdMax, ' +
+        'COALESCE(MAX(INSTR(format, CHAR(0))), 0) AS nulFmt, COALESCE(MAX(INSTR(createdAt, CHAR(0))), 0) AS nulCreated FROM backup_info').get();
     } catch { throw fail(400, BAD_BACKUP); }
     if (!infoBounds || infoBounds.c !== 1) throw fail(400, BAD_BACKUP);
     if (infoBounds.fmtMax > 64 || infoBounds.createdMax > 32) throw fail(400, BAD_BACKUP);
+    if (infoBounds.nulFmt || infoBounds.nulCreated) throw fail(400, BAD_BACKUP);
 
     let info;
     try {
@@ -258,12 +298,19 @@ function restoreDraftBackup(db, filePath, userId) {
                 COALESCE(MAX(LENGTH(savedAt)), 0) AS savedAtMax,
                 COALESCE(MAX(LENGTH(category)), 0) AS categoryMax,
                 COALESCE(MAX(CASE WHEN fileData IS NULL THEN 0 ELSE LENGTH(fileData) END), 0) AS blobMax,
+                COALESCE(MAX(INSTR(title, CHAR(0))), 0) AS nulTitle,
+                COALESCE(MAX(CASE WHEN description IS NULL THEN 0 ELSE INSTR(description, CHAR(0)) END), 0) AS nulDesc,
+                COALESCE(MAX(INSTR(savedAt, CHAR(0))), 0) AS nulSaved,
+                COALESCE(MAX(INSTR(category, CHAR(0))), 0) AS nulCategory,
+                COALESCE(MAX(CASE WHEN fileName IS NULL THEN 0 ELSE INSTR(fileName, CHAR(0)) END), 0) AS nulName,
+                COALESCE(MAX(CASE WHEN fileType IS NULL THEN 0 ELSE INSTR(fileType, CHAR(0)) END), 0) AS nulType,
                 COALESCE(SUM(LENGTH(title) + LENGTH(COALESCE(description, '')) + LENGTH(savedAt) + LENGTH(category) +
                              LENGTH(COALESCE(fileName, '')) + LENGTH(COALESCE(fileType, ''))), 0) AS metaSum
            FROM versions`
       ).get();
     } catch { throw fail(400, BAD_BACKUP); }
     if (b.cnt !== n || b.minV !== 1 || b.maxV !== n) throw fail(400, BAD_BACKUP);
+    if (b.nulTitle || b.nulDesc || b.nulSaved || b.nulCategory || b.nulName || b.nulType) throw fail(400, BAD_BACKUP);
     if (b.titleMax > MAX_TITLE_LEN) throw fail(413, '草稿文本过大');
     if (b.descMax > MAX_DESCRIPTION_LEN) throw fail(413, '草稿文本过大');
     if (b.savedAtMax > 32 || b.categoryMax > 16) throw fail(413, '元数据总量过大');

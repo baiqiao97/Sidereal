@@ -12,6 +12,17 @@ const { createStore } = require('../store.cjs');
 
 const root = path.resolve(__dirname, '..');
 const password = 'Only-Synthetic-Backup-Password!';
+
+// Independent of the module internals: must exceed the module's real per-field caps so that
+// a length-limit bypass (LENGTH(TEXT) truncating at U+0000) is provable if it still exists.
+const MAX_TITLE_LEN_SAFE = 24000;
+const MAX_DESCRIPTION_LEN_SAFE = 1_100_000;
+const NUL_TITLE = 'ab\u0000' + '大'.repeat(MAX_TITLE_LEN_SAFE); // LENGTH() sees only 2 chars
+const MAX_TITLE_CHARS = 16384; // mirrors the module's real caps; NUL tails in tests stay beyond them
+const MAX_DESCRIPTION_CHARS = 1048576;
+const MAX_FILE_NAME_CHARS = 4096;
+const MAX_FILE_TYPE_CHARS = 256;
+const ISO_TS = '2026-01-01T00:00:00.000Z';
 const metadata = (title, expectedVersion, attachmentVersion) => ({ title, description: '备份简介 <img src=x>', category: 'notes', expectedVersion,
   ...(attachmentVersion ? { attachmentVersion } : {}) });
 const rejectsStatus = status => error => error.status === status;
@@ -252,4 +263,268 @@ test('archive metadata footprint is bounded before restoring a large history', {
   const before = store.list(b.user.id);
   assert.throws(() => store.restoreBackup(archive, b.user.id), rejectsStatus(413));
   assert.deepEqual(store.list(b.user.id), before);
+});
+
+// ---- P15: SQLite LENGTH(TEXT) truncates at U+0000; metadata size limits must survive it ----
+
+test('SQL length and NUL probes pin SQLite text semantics around U+0000', () => {
+  const probe = new DatabaseSync(':memory:');
+  probe.exec('CREATE TABLE p (x TEXT) STRICT');
+  probe.prepare('INSERT INTO p VALUES (?)').run('ab\u0000中文\u0000tail');
+  const row = probe.prepare(
+    "SELECT LENGTH(x) AS l, INSTR(CAST(x AS BLOB), X'00') AS nulPos, " +
+    "INSTR(x, CHAR(0)) AS charNul, " +
+    "INSTR(CAST('无空字符' AS BLOB), X'00') AS cleanPos, INSTR('无空字符', CHAR(0)) AS cleanChar, " +
+    "LENGTH(CAST('中文' AS BLOB)) AS bytes FROM p"
+  ).get();
+  assert.equal(row.l, 2, 'LENGTH(TEXT) must stop at the first U+0000');
+  assert.equal(row.nulPos, 3, 'INSTR over BLOB cast returns 1-based byte position of the first NUL');
+  assert.equal(row.charNul, 3, 'INSTR(x, CHAR(0)) finds the U+0000 character');
+  assert.equal(row.cleanChar, 0, 'U+0000-free text must not be flagged');
+  assert.equal(row.cleanPos, 0, 'NUL-free text must not be flagged');
+  assert.equal(row.bytes, 6, '中文 stays 6 UTF-8 bytes while LENGTH counts code points');
+  probe.close();
+  // Same character probe must behave identically on UTF-16 encoded databases, whose clean
+  // ASCII text legitimately contains 0x00 bytes in a byte-level scan.
+  for (const enc of ['UTF-16le', 'UTF-16be']) {
+    const probe16 = new DatabaseSync(':memory:');
+    probe16.exec(`PRAGMA encoding='${enc}'; CREATE TABLE p (x TEXT) STRICT`);
+    probe16.prepare('INSERT INTO p VALUES (?)').run('ab\u0000tail');
+    const r16 = probe16.prepare("SELECT INSTR(x, CHAR(0)) AS p, INSTR('utf16-clean', CHAR(0)) AS clean FROM p").get();
+    assert.equal(r16.p, 3, `${enc}: CHAR(0) probe finds the NUL character`);
+    assert.equal(r16.clean, 0, `${enc}: clean ASCII text is not flagged`);
+    probe16.close();
+  }
+});
+
+test('U+0000 metadata is rejected on export and restore before copying data', { timeout: 60000 }, async t => {
+  const { directory, dbPath, store, a, b } = await fixture(t);
+  const archive = path.join(directory, 'nul.studio-backup');
+  store.exportBackup('source', archive, a.user.id); // pristine copy, must never be overwritten
+  const pristine = await fs.readFile(archive);
+
+  // Export direction: plant a NUL-padded title directly in the source database.
+  const plant = new DatabaseSync(dbPath);
+  try { plant.prepare('UPDATE versions SET title = ? WHERE draftId = ?').run(NUL_TITLE, 'source'); }
+  finally { plant.close(); }
+  assert.throws(() => store.exportBackup('source', archive, a.user.id), rejectsStatus(400), 'NUL title must be rejected pre-copy');
+  assert.deepEqual(await fs.readFile(archive), pristine, 'existing backup must not be touched by a failed export');
+
+  // Restore direction: export a clean draft first, then tamper with the archive copy (title only).
+  const cleanPath = path.join(directory, 'clean-title.studio-backup');
+  const cleaner = new DatabaseSync(dbPath);
+  try { cleaner.prepare("UPDATE versions SET title = 'clean-title' WHERE draftId = ?").run('source'); }
+  finally { cleaner.close(); }
+  store.exportBackup('source', cleanPath, a.user.id);
+  const tamper = new DatabaseSync(cleanPath);
+  try { tamper.prepare('UPDATE versions SET title = ? WHERE version = 1').run(NUL_TITLE); }
+  finally { tamper.close(); }
+  const before = store.list(b.user.id);
+  assert.throws(() => store.restoreBackup(cleanPath, b.user.id), rejectsStatus(400), 'NUL metadata must be rejected pre-copy');
+  assert.deepEqual(store.list(b.user.id), before, 'invalid backup must not modify target account data');
+});
+
+// ---- P15-C: per-field NUL/oversize regression on the real store export/restore paths ----
+
+test('planted U+0000 in any single field is rejected on export without creating files', { timeout: 60000 }, async t => {
+  const { directory, dbPath, store, a } = await fixture(t);
+  const kept = path.join(directory, 'kept.studio-backup');
+  store.exportBackup('source', kept, a.user.id); // pre-existing legal target, must never change
+  const keptBytes = await fs.readFile(kept);
+  const fresh = path.join(directory, 'fresh.studio-backup');
+  const noSuch = () => assert.rejects(fs.stat(fresh), { code: 'ENOENT' }, 'failed export must not create a target file');
+
+  const live = new DatabaseSync(dbPath);
+  try {
+    const row1 = live.prepare("SELECT savedAt, title, description, category, fileName, fileType FROM versions WHERE draftId='source' AND version=1").get();
+    const originalCreated = live.prepare("SELECT createdAt FROM drafts WHERE id='source'").get().createdAt;
+    const resetRow = () => live.prepare(
+      "UPDATE versions SET savedAt=?, title=?, description=?, category=?, fileName=?, fileType=? WHERE draftId='source' AND version=1"
+    ).run(row1.savedAt, row1.title, row1.description, row1.category, row1.fileName, row1.fileType);
+    const setRow = (field, value) => live.prepare(`UPDATE versions SET ${field}=? WHERE draftId='source' AND version=1`).run(value);
+
+    // One field polluted per case; hidden tails exceed the real field caps so a surviving
+    // LENGTH-only limit check would be demonstrably bypassed.
+    const nulCases = [
+      ['title (start)', 'title', '\u0000' + '大'.repeat(MAX_TITLE_LEN_SAFE)],
+      ['title (middle)', 'title', 'ab\u0000' + '大'.repeat(MAX_TITLE_LEN_SAFE)],
+      ['title (end of visible text)', 'title', 'x'.repeat(MAX_TITLE_CHARS) + '\u0000' + 'y'.repeat(MAX_TITLE_LEN_SAFE)],
+      ['description', 'description', '\u0000' + 'x'.repeat(MAX_DESCRIPTION_LEN_SAFE + 1)],
+      ['savedAt', 'savedAt', ISO_TS + '\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE)],
+      ['category', 'category', 'notes\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE)],
+      ['fileName', 'fileName', '清.txt\u0000' + 'x'.repeat(MAX_FILE_NAME_CHARS + 1)],
+      ['fileType', 'fileType', 'text/plain\u0000' + 'x'.repeat(MAX_FILE_TYPE_CHARS + 1)],
+    ];
+    for (const [label, field, value] of nulCases) {
+      setRow(field, value);
+      assert.throws(() => store.exportBackup('source', fresh, a.user.id), rejectsStatus(400), label);
+      // NUL is checked before target-existence, so an existing target also fails 400, byte-identical.
+      assert.throws(() => store.exportBackup('source', kept, a.user.id), rejectsStatus(400), label);
+      await noSuch();
+      assert.deepEqual(await fs.readFile(kept), keptBytes, label);
+      resetRow();
+    }
+
+    // drafts.createdAt is gated by the SQL scalar check before validIsoDate ever sees JS text.
+    live.prepare("UPDATE drafts SET createdAt=? WHERE id='source'").run('\u0000' + ISO_TS);
+    assert.throws(() => store.exportBackup('source', fresh, a.user.id), rejectsStatus(400), 'drafts.createdAt at start');
+    await noSuch();
+    live.prepare("UPDATE drafts SET createdAt=? WHERE id='source'").run(ISO_TS + '\u0000hidden-tail');
+    assert.throws(() => store.exportBackup('source', fresh, a.user.id), rejectsStatus(400), 'drafts.createdAt hidden tail');
+    await noSuch();
+    live.prepare("UPDATE drafts SET createdAt=? WHERE id='source'").run(originalCreated);
+
+    // Same fields oversized without NUL must stay 413 (size direction unchanged).
+    const bigCases = [
+      ['title', '大'.repeat(MAX_TITLE_CHARS + 1)],
+      ['description', '落'.repeat(MAX_DESCRIPTION_CHARS + 1)],
+      ['savedAt', 'a'.repeat(32 + 1)],
+      ['category', 'c'.repeat(16 + 1)],
+      ['fileName', 'f'.repeat(MAX_FILE_NAME_CHARS + 1)],
+      ['fileType', 't'.repeat(MAX_FILE_TYPE_CHARS + 1)],
+    ];
+    for (const [field, value] of bigCases) {
+      setRow(field, value);
+      assert.throws(() => store.exportBackup('source', fresh, a.user.id), rejectsStatus(413), field);
+      await noSuch();
+      resetRow();
+    }
+
+    // Legacy NULL description export is unchanged (restores normalized to '').
+    live.prepare("UPDATE versions SET description=NULL WHERE draftId='source' AND version=1").run();
+    const nullDesc = path.join(directory, 'null-desc.studio-backup');
+    store.exportBackup('source', nullDesc, a.user.id);
+    const legacy = store.restoreBackup(nullDesc, a.user.id);
+    assert.equal(store.get(legacy.id, a.user.id).versions[0].description, '');
+    resetRow(); // put the source row back before the final integrity check
+
+    const rowNow = live.prepare("SELECT savedAt, title, description, category, fileName, fileType FROM versions WHERE draftId='source' AND version=1").get();
+    assert.deepEqual(rowNow, row1, 'source metadata row must be byte-for-byte restored');
+    assert.equal(live.prepare("SELECT createdAt FROM drafts WHERE id='source'").get().createdAt, originalCreated, 'draft createdAt restored');
+  } finally { live.close(); }
+});
+
+test('planted U+0000 in any single archive field is rejected before touching target data', { timeout: 60000 }, async t => {
+  const { directory, dbPath, store, a, b } = await fixture(t);
+  const base = path.join(directory, 'base.studio-backup');
+  store.exportBackup('source', base, a.user.id);
+
+  const before = store.list(b.user.id);
+  const counts = () => {
+    const d = new DatabaseSync(dbPath);
+    try {
+      return d.prepare('SELECT (SELECT COUNT(*) FROM drafts) AS drafts, (SELECT COUNT(*) FROM versions) AS versions, ' +
+        '(SELECT COUNT(*) FROM draft_owners) AS owners, (SELECT COUNT(*) FROM publications) AS publications').get();
+    } finally { d.close(); }
+  };
+  const original = counts();
+  const setRow = (db, field, value) => db.prepare(`UPDATE versions SET ${field} = ? WHERE version = 1`).run(value);
+
+  const nulCases = [
+    ['versions.title', db => setRow(db, 'title', '\u0000' + '大'.repeat(MAX_TITLE_LEN_SAFE))],
+    ['versions.description', db => setRow(db, 'description', 'ab\u0000' + 'x'.repeat(MAX_DESCRIPTION_LEN_SAFE + 1))],
+    ['versions.savedAt', db => setRow(db, 'savedAt', ISO_TS + '\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE))],
+    ['versions.category', db => setRow(db, 'category', 'notes\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE))],
+    ['versions.fileName', db => setRow(db, 'fileName', '清.txt\u0000' + 'x'.repeat(MAX_FILE_NAME_CHARS + 1))],
+    ['versions.fileType', db => setRow(db, 'fileType', 'text/plain\u0000' + 'x'.repeat(MAX_FILE_TYPE_CHARS + 1))],
+    ['backup_info.format', db => db.prepare('UPDATE backup_info SET format = ?').run('sidereal-draft-backup\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE))],
+    ['backup_info.createdAt', db => db.prepare('UPDATE backup_info SET createdAt = ?').run(ISO_TS + '\u0000' + 'x'.repeat(MAX_TITLE_LEN_SAFE))],
+    ['sqlite_schema.sql (writable_schema NUL tail)', db => {
+      db.exec('PRAGMA writable_schema = ON');
+      db.prepare("UPDATE sqlite_schema SET sql = sql || ? WHERE name = 'versions'").run('\u0000' + 'x'.repeat(6000));
+      db.exec('PRAGMA writable_schema = OFF');
+    }],
+  ];
+  for (const [label, mutate] of nulCases) {
+    const bad = path.join(directory, 'bad-nul-' + sanitize(label) + '.studio-backup');
+    await fs.copyFile(base, bad);
+    const db = new DatabaseSync(bad);
+    try { mutate(db); } finally { db.close(); }
+    assert.throws(() => store.restoreBackup(bad, b.user.id), rejectsStatus(400), label);
+    assert.deepEqual(store.list(b.user.id), before, label);
+    assert.deepEqual(counts(), original, label);
+  }
+
+  // Oversized clean values (no NUL) keep the 413 direction on restore as well.
+  const bigCases = [
+    ['title', db => setRow(db, 'title', '大'.repeat(MAX_TITLE_CHARS + 1))],
+    ['description', db => setRow(db, 'description', '落'.repeat(MAX_DESCRIPTION_CHARS + 1))],
+    ['fileName', db => setRow(db, 'fileName', 'f'.repeat(MAX_FILE_NAME_CHARS + 1))],
+    ['fileType', db => setRow(db, 'fileType', 't'.repeat(MAX_FILE_TYPE_CHARS + 1))],
+  ];
+  for (const [field, mutate] of bigCases) {
+    const bad = path.join(directory, 'bad-big-' + sanitize(field) + '.studio-backup');
+    await fs.copyFile(base, bad);
+    const db = new DatabaseSync(bad);
+    try { mutate(db); } finally { db.close(); }
+    assert.throws(() => store.restoreBackup(bad, b.user.id), rejectsStatus(413), field);
+    assert.deepEqual(store.list(b.user.id), before, field);
+    assert.deepEqual(counts(), original, field);
+  }
+});
+
+function sanitize(label) {
+  return String(label).replace(/[^A-Za-z0-9]+/g, '-').slice(0, 40);
+}
+
+test('metadata exactly at the character caps and UTF-16 backups restore losslessly', { timeout: 120000 }, async t => {
+  const { directory, dbPath, store, a, b, first } = await fixture(t);
+  const base = path.join(directory, 'caps-base.studio-backup');
+  store.exportBackup('source', base, a.user.id);
+
+  // Positive: row 1 planted at the exact character caps must export and restore intact.
+  const live = new DatabaseSync(dbPath);
+  let sourceCreatedAt;
+  try {
+    live.prepare("UPDATE versions SET title=?, description=?, fileName=?, fileType=? WHERE draftId='source' AND version=1")
+      .run('😀'.repeat(MAX_TITLE_CHARS), '中'.repeat(MAX_DESCRIPTION_CHARS), '🚀'.repeat(MAX_FILE_NAME_CHARS - 4) + '.txt', 'text/plain');
+    sourceCreatedAt = live.prepare("SELECT createdAt FROM drafts WHERE id='source'").get().createdAt;
+  } finally { live.close(); }
+  const capped = path.join(directory, 'caps.studio-backup');
+  store.exportBackup('source', capped, a.user.id);
+  const restored = store.restoreBackup(capped, b.user.id);
+  const got = store.get(restored.id, b.user.id);
+  assert.equal(got.versions.length, 4);
+  assert.equal(got.versions[0].title, '😀'.repeat(MAX_TITLE_CHARS));
+  assert.equal(got.versions[0].description, '中'.repeat(MAX_DESCRIPTION_CHARS));
+  assert.equal(got.versions[0].file.name, '🚀'.repeat(MAX_FILE_NAME_CHARS - 4) + '.txt');
+  assert.equal(got.versions[0].file.type, 'text/plain');
+  assert.deepEqual(store.getFile(restored.id, 1, b.user.id).bytes, first, 'attachment with embedded 0x00 bytes stays intact');
+
+  // UTF-16 archives built from the exact two-table schema and rows of a legal export.
+  const reader = new DatabaseSync(base, { readOnly: true });
+  let schema, infoRows, versionRows;
+  try {
+    schema = reader.prepare("SELECT name, sql FROM sqlite_schema WHERE type='table' ORDER BY rowid").all();
+    infoRows = reader.prepare('SELECT format, formatVersion, createdAt, currentVersion FROM backup_info').all();
+    versionRows = reader.prepare('SELECT version, savedAt, title, description, category, fileName, fileType, fileData FROM versions ORDER BY version').all();
+  } finally { reader.close(); }
+  assert.deepEqual(schema.map(row => row.name), ['backup_info', 'versions']);
+  for (const enc of ['UTF-16le', 'UTF-16be']) {
+    const target = path.join(directory, 'utf16-' + enc + '.studio-backup');
+    const dest = new DatabaseSync(target);
+    try {
+      dest.exec(`PRAGMA encoding='${enc}'`);
+      for (const table of schema) dest.exec(table.sql);
+      dest.exec('BEGIN');
+      dest.prepare('INSERT INTO backup_info VALUES (?, ?, ?, ?)')
+        .run(infoRows[0].format, infoRows[0].formatVersion, infoRows[0].createdAt, infoRows[0].currentVersion);
+      const insV = dest.prepare('INSERT INTO versions VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+      for (const row of versionRows) {
+        insV.run(row.version, row.savedAt, row.title, row.description, row.category, row.fileName, row.fileType, row.fileData);
+      }
+      dest.exec('COMMIT');
+    } finally { dest.close(); }
+    const encodingProbe = new DatabaseSync(target, { readOnly: true });
+    let actual;
+    try { actual = encodingProbe.prepare('PRAGMA encoding').get().encoding; } finally { encodingProbe.close(); }
+    assert.equal(actual, enc, `archive must really be ${enc}`);
+    const utf16 = store.restoreBackup(target, b.user.id);
+    const copy = store.get(utf16.id, b.user.id);
+    assert.equal(copy.versions.length, 4, `${enc}: all versions imported`);
+    assert.equal(copy.versions[0].title, '第一版', `${enc}: Chinese metadata preserved`);
+    assert.equal(copy.versions[0].description, '备份简介 <img src=x>', `${enc}: description preserved`);
+    assert.equal(copy.createdAt, sourceCreatedAt);
+    assert.deepEqual(store.getFile(utf16.id, 1, b.user.id).bytes, first, `${enc}: NUL-bearing attachment preserved`);
+  }
 });
